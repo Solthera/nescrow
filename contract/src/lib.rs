@@ -556,6 +556,119 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // M-09 release_after_review, M-04 / M-08 refunds
+    // (SCTS §6.2, STS §5.8 / §5.2B / §5.4)
+    // -----------------------------------------------------------------------
+
+    /// Automatic release. Callable by **anyone** — the destination and amount
+    /// are fixed, so a caller cannot redirect a single yocto (STS §5.8).
+    #[handle_result]
+    pub fn release_after_review(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Delivered || p.review_deadline == 0 {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() < p.review_deadline {
+            return Err(ContractError::ReviewPeriodNotExpired);
+        }
+
+        self.settle_by_rule(&mut p, 100)?;
+        p.status = ProjectStatus::Released;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Released",
+                "freelancer_amount": p.amount.to_string(),
+                "client_amount": "0",
+                "resolved_by": null
+            }),
+        );
+        Ok(())
+    }
+
+    /// Refund because the freelancer never answered within the acceptance window.
+    #[handle_result]
+    pub fn claim_no_response_refund(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.client {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Funded {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() < p.accept_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
+
+        self.settle_by_rule(&mut p, 0)?;
+        p.status = ProjectStatus::Refunded;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Refunded",
+                "freelancer_amount": "0",
+                "client_amount": p.amount.to_string(),
+                "resolved_by": null
+            }),
+        );
+        Ok(())
+    }
+
+    /// Refund because the freelancer never submitted an initial deliverable.
+    ///
+    /// Only the initial deadline qualifies: a missed *revision* deadline is not
+    /// a refund trigger (FSD §4.5) — the client opens a dispute instead.
+    #[handle_result]
+    pub fn claim_deadline_refund(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.client {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Accepted {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() < p.work_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
+
+        self.settle_by_rule(&mut p, 0)?;
+        p.status = ProjectStatus::Refunded;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Refunded",
+                "freelancer_amount": "0",
+                "client_amount": p.amount.to_string(),
+                "resolved_by": null
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
