@@ -8,7 +8,7 @@
 
 use near_sdk::store::LookupMap;
 use near_sdk::json_types::{U128, U64};
-use near_sdk::{env, near, AccountId, PanicOnDefault};
+use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult};
 
 mod constants;
 mod errors;
@@ -918,6 +918,74 @@ impl Contract {
             }),
         );
         Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // M-15 withdraw + M-16 on_withdraw (SCTS §5.3, §8.4, STS §9)
+    // -----------------------------------------------------------------------
+
+    /// Pull payment: the recipient moves their allocated balance to their wallet.
+    ///
+    /// The debit happens *before* the transfer is created, so a double call can
+    /// never pay twice. If the transfer fails, `on_withdraw` restores the
+    /// balance — the allocation itself is never touched.
+    #[handle_result]
+    pub fn withdraw(&mut self) -> Result<Promise, ContractError> {
+        let caller = env::predecessor_account_id();
+        let amount = self.claimable.get(&caller).copied().unwrap_or(0);
+
+        if amount == 0 {
+            return Err(ContractError::NothingToWithdraw);
+        }
+        if self.withdrawals.get(&caller).is_some() {
+            return Err(ContractError::WithdrawInProgress);
+        }
+
+        self.claimable.insert(caller.clone(), 0);
+        self.withdrawals.insert(
+            caller.clone(),
+            WithdrawalRecord {
+                amount,
+                started_at: Self::now(),
+            },
+        );
+        self.total_claimable = self.total_claimable.saturating_sub(amount);
+
+        let callback_args = serde_json::json!([caller.to_string(), U128::from(amount)]).to_string();
+        let promise = Promise::new(caller.clone())
+            .transfer(NearToken::from_yoctonear(amount))
+            .then(Promise::new(env::current_account_id()).function_call(
+                "on_withdraw".to_string(),
+                callback_args.into_bytes(),
+                NearToken::from_yoctonear(0),
+                Gas::from_tgas(10),
+            ));
+
+        Ok(promise)
+    }
+
+    /// Reconcile the transfer outcome. `#[private]` means only the contract
+    /// itself can reach this, via the promise above.
+    #[private]
+    pub fn on_withdraw(&mut self, account: AccountId, amount: U128) {
+        self.withdrawals.remove(&account);
+
+        match env::promise_result(0) {
+            PromiseResult::Successful(_) => {
+                Self::emit(
+                    "withdraw_succeeded",
+                    serde_json::json!({ "account": account.to_string(), "amount": amount.0.to_string() }),
+                );
+            }
+            _ => {
+                // Give the balance back so the recipient can simply retry.
+                self.credit(&account, amount.0);
+                Self::emit(
+                    "withdraw_failed",
+                    serde_json::json!({ "account": account.to_string(), "amount": amount.0.to_string() }),
+                );
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
