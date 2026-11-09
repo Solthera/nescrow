@@ -1,10 +1,10 @@
 # SMART CONTRACT TECHNICAL SPECIFICATION (SCTS)
 
 **Project:** NEAR Escrow
-**Document Version:** 1.5 — Final
+**Document Version:** 1.6 — Final
 **Status:** Approved
 **Date:** November 8, 2026
-**Revision:** v1.5: crate renamed to `nescrow` (matches the repository) and MVP acceptance IDs moved to `MA-xx` to stop colliding with the Test Plan's `AC-xx`. v1.4 applies the fourth audit: `Balance` replaced with a local `Yocto` alias plus `NearToken` boundary unwrapping (D-24 — near-sdk 5 exports no `Balance` and `NearToken` has no `Sub`/`Mul`, so the old snippets could not compile), storage reserve figures corrected to the 6,000-byte bound (0.06 NEAR/project, 20 NEAR recommended), `credit()` plus Rust `Config`/`FundInvariants` defined, and `MAX_PROJECT_STORAGE_BYTES` demoted from "measured" to a declared bound guarded by AD-10. v1.3 applies the third audit: `work_deadline` typed `U64` so the frontend's string payload deserialises (D-22), deterministic `MAX_PROJECT_STORAGE_BYTES` so the `E-14` reserve check is implementable (D-23), `get_withdrawal_state` returns `WithdrawalRecordView` (the D-15 precision fix had missed it), missing `DeliverableView`/`EvidenceView`/`ResolutionView` defined, §7.3 numbering repaired, transition count corrected to 13, and the `ContractPaused` precedence raised to match `create_project`'s validation order. v1.2 applies the second independent audit: JSON DTOs so amounts and timestamps are strings (D-15, §4.3.1), explicit reserve pre-check (D-16), `withdraw` returning `Result<Promise, _>` with a documented fallback (D-17), lowercase `Role` wire format (D-18), `E-22` for admin recovery paths (D-19), and a work-deadline floor that prevents born-dead projects (D-20). v1.1 fixes: `resolution` is now written only on dispute paths (D-11), error codes split and given a precedence order (D-12, §11.1), `E-12` documented as event-only (§11.2), `get_claimable_per_project` renamed semantics fixed (§6.3), dependency versions updated to near-sdk 5.30 / near-workspaces 0.24.
+**Revision:** v1.6 records the corrections found by the first real compile (D-25) and marks the snippets as toolchain-verified. v1.5: crate renamed to `nescrow` (matches the repository) and MVP acceptance IDs moved to `MA-xx` to stop colliding with the Test Plan's `AC-xx`. v1.4 applies the fourth audit: `Balance` replaced with a local `Yocto` alias plus `NearToken` boundary unwrapping (D-24 — near-sdk 5 exports no `Balance` and `NearToken` has no `Sub`/`Mul`, so the old snippets could not compile), storage reserve figures corrected to the 6,000-byte bound (0.06 NEAR/project, 20 NEAR recommended), `credit()` plus Rust `Config`/`FundInvariants` defined, and `MAX_PROJECT_STORAGE_BYTES` demoted from "measured" to a declared bound guarded by AD-10. v1.3 applies the third audit: `work_deadline` typed `U64` so the frontend's string payload deserialises (D-22), deterministic `MAX_PROJECT_STORAGE_BYTES` so the `E-14` reserve check is implementable (D-23), `get_withdrawal_state` returns `WithdrawalRecordView` (the D-15 precision fix had missed it), missing `DeliverableView`/`EvidenceView`/`ResolutionView` defined, §7.3 numbering repaired, transition count corrected to 13, and the `ContractPaused` precedence raised to match `create_project`'s validation order. v1.2 applies the second independent audit: JSON DTOs so amounts and timestamps are strings (D-15, §4.3.1), explicit reserve pre-check (D-16), `withdraw` returning `Result<Promise, _>` with a documented fallback (D-17), lowercase `Role` wire format (D-18), `E-22` for admin recovery paths (D-19), and a work-deadline floor that prevents born-dead projects (D-20). v1.1 fixes: `resolution` is now written only on dispute paths (D-11), error codes split and given a precedence order (D-12, §11.1), `E-12` documented as event-only (§11.2), `get_claimable_per_project` renamed semantics fixed (§6.3), dependency versions updated to near-sdk 5.30 / near-workspaces 0.24.
 **Based on:** Functional Specification Document (FSD) v1.5 · State Transition Specification (STS) v1.5
 **Network:** NEAR Testnet
 **Target SDK:** `near-sdk` 5.x · Rust stable (2021 edition)
@@ -349,6 +349,9 @@ pub struct Contract {
     pub state_version: u16,
 
     pub next_project_id: u64,
+    /// `store::LookupMap`, whose storage key is `Vec<u8>` — pass
+    /// `b"p".to_vec()`, not `b"p"` (an `&[u8; N]` does not satisfy
+    /// `IntoStorageKey`). Verified by compiler, see D-25.
     pub projects: LookupMap<u64, Project>,
 
     // dashboard indexes (append-only)
@@ -1023,6 +1026,8 @@ pub enum ContractError {
 "E-04: invalid escrow amount"
 ```
 
+**`#[handle_result]` requires `AsRef<str>`.** near-sdk's `FunctionError` is bounded on it, so a variant cannot build its message with `format!` — each one must return a `&'static str` that already contains the code. The reference implementation keeps a single `AsRef<str>` match with literals like `"E-14: insufficient storage reserve"` and routes `Display` through it, so there is exactly one place where the text lives (D-25).
+
 Codes `E-01`–`E-12` come from FSD §7. `E-13`–`E-22` are additions introduced by this specification and must be documented in the frontend error catalogue.
 
 ## 11.1 Error Selection Precedence
@@ -1374,6 +1379,21 @@ The percentage passed to `settle_mutual` is compared against the **counterparty'
 `MAX_PROJECT_STORAGE_BYTES` (6,000) is a constant; `storage_stake_after_write = storage_byte_cost() × (storage_usage() + MAX_PROJECT_STORAGE_BYTES)`.
 
 *Rationale:* "storage usage after the write" is not a value the SDK exposes — `env::storage_usage()` reports current usage only. Without a fixed bound the check cannot be written at all, so an implementer would fall back on the final `assert_solvent()` and produce a panic where `E-14` was promised, failing AD-01. The bound is conservative (over-reserves slightly for short strings) and must be re-measured whenever `Project` gains a field.
+
+### D-25 — Compiler-verified corrections to the snippets
+
+The first slice was compiled against `near-sdk` 5.30.1 with `cargo check --target wasm32-unknown-unknown`. Four things in this document's code blocks were wrong and are now fixed in the contract:
+
+| Was | Compiler said | Now |
+|---|---|---|
+| `#[near_sdk::serde(rename_all = "lowercase")]` | `cannot find serde in near_sdk` | plain `#[serde(rename_all = "lowercase")]` — `serde` is a direct dependency, and near-sdk 5.30 does not re-export the module |
+| `LookupMap::new(b"p")` | `&[u8; 2]` does not satisfy `IntoStorageKey` | `LookupMap::new(b"p".to_vec())` |
+| `map.insert(key, &value)` | expected `Project`, found `&Project` | `store::LookupMap::insert` takes the value **by value** |
+| `Result<T, ContractError>` with `#[handle_result]` | `ContractError` does not implement `FunctionError` | implement `AsRef<str>` returning a `&'static str` per variant, with the error code baked in |
+
+*Rationale for recording this at all:* a specification whose code blocks do not compile is worse than no code blocks — it invites copy-paste bugs. This entry is the boundary line between "reviewed by reading" and "verified by toolchain", and it replaces a sixth documentation audit with `cargo check`.
+
+Also confirmed by the build, not by inspection: `env::account_balance() -> NearToken` and `env::storage_byte_cost() -> NearToken` (D-24 holds), and the release artifact is 176 KB, under the 300 KB budget in §12.
 
 ### D-24 — Money is `u128` internally, `NearToken` only at the SDK boundary
 

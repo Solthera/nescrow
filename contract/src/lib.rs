@@ -57,12 +57,12 @@ impl Contract {
             owner,
             state_version: STATE_VERSION,
             next_project_id: 0,
-            projects: LookupMap::new(b"p"),
-            client_index: LookupMap::new(b"ci"),
-            freelancer_index: LookupMap::new(b"fi"),
-            arbiter_index: LookupMap::new(b"ai"),
-            claimable: LookupMap::new(b"c"),
-            withdrawals: LookupMap::new(b"w"),
+            projects: LookupMap::new(b"p".to_vec()),
+            client_index: LookupMap::new(b"ci".to_vec()),
+            freelancer_index: LookupMap::new(b"fi".to_vec()),
+            arbiter_index: LookupMap::new(b"ai".to_vec()),
+            claimable: LookupMap::new(b"c".to_vec()),
+            withdrawals: LookupMap::new(b"w".to_vec()),
             total_locked: 0,
             total_claimable: 0,
             paused: false,
@@ -113,7 +113,7 @@ impl Contract {
         }
         let current = self.claimable.get(account).copied().unwrap_or(0);
         let next = current.checked_add(amount).unwrap_or(Yocto::MAX);
-        self.claimable.insert(account.clone(), &next);
+        self.claimable.insert(account.clone(), next);
         self.total_claimable = self.total_claimable.checked_add(amount).unwrap_or(Yocto::MAX);
     }
 
@@ -218,7 +218,7 @@ impl Contract {
             distribution: None,
         };
 
-        self.projects.insert(id, &project);
+        self.projects.insert(id, project.clone());
         self.total_locked = self.total_locked.checked_add(amount).unwrap_or(Yocto::MAX);
 
         self.index_add(&client, Role::Client, id);
@@ -244,7 +244,7 @@ impl Contract {
         };
         let mut ids = map.get(account).cloned().unwrap_or_default();
         ids.push(id);
-        map.insert(account.clone(), &ids);
+        map.insert(account.clone(), ids);
     }
 
     // -----------------------------------------------------------------------

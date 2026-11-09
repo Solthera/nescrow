@@ -47,7 +47,7 @@ impl ProjectStatus {
 /// Wire format is lowercase (`"client" | "freelancer" | "arbiter"`), matching
 /// the frontend's `Role` type and the `get_projects` argument (SCTS D-18).
 #[near_sdk::near(serializers = [json])]
-#[near_sdk::serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
     Client,
