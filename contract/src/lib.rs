@@ -6,9 +6,9 @@
 //! Layout of the first slice: state, fund accounting, `create_project` and the
 //! read-only views. Remaining transitions land on top of the same helpers.
 
-use near_sdk::collections::LookupMap;
+use near_sdk::store::LookupMap;
 use near_sdk::json_types::{U128, U64};
-use near_sdk::{env, near, require, AccountId, NearToken, PanicOnDefault};
+use near_sdk::{env, near, AccountId, PanicOnDefault};
 
 mod constants;
 mod errors;
@@ -95,12 +95,15 @@ impl Contract {
 
     /// Hard invariant: escrow + claimable never exceeds what the contract can
     /// actually pay out. A violation aborts the whole transaction.
-    fn assert_solvent(&self) {
+    fn assert_solvent(&self) -> Result<(), ContractError> {
         let owed = self
             .total_locked
             .checked_add(self.total_claimable)
             .unwrap_or(Yocto::MAX);
-        require!(Self::spendable() >= owed, ContractError::InsufficientReserve);
+        if Self::spendable() < owed {
+            return Err(ContractError::InsufficientReserve);
+        }
+        Ok(())
     }
 
     /// The only writer of `claimable` (SCTS §5.2.2).
@@ -135,6 +138,7 @@ impl Contract {
     /// amount argument (SCTS D-06), which removes the "deposit does not match
     /// declared amount" bug class entirely.
     #[payable]
+    #[handle_result]
     pub fn create_project(
         &mut self,
         freelancer: AccountId,
@@ -149,24 +153,29 @@ impl Contract {
 
         // Validation order is normative (SCTS §11.1): paused -> amount ->
         // participants -> strings -> deadline floor -> reserve.
-        require!(!self.paused, ContractError::ContractPaused);
-        require!(amount >= MIN_ESCROW, ContractError::InvalidEscrowAmount);
-        require!(
-            freelancer != client && arbiter != client && freelancer != arbiter,
-            ContractError::InvalidParticipants
-        );
-        require!(
-            !title.is_empty()
-                && title.len() <= MAX_TITLE_LEN
-                && !description.is_empty()
-                && description.len() <= MAX_DESCRIPTION_LEN,
-            ContractError::InvalidInput
-        );
+        if self.paused {
+            return Err(ContractError::ContractPaused);
+        }
+        if amount < MIN_ESCROW {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+        if freelancer == client || arbiter == client || freelancer == arbiter {
+            return Err(ContractError::InvalidParticipants);
+        }
+        if title.is_empty()
+            || title.len() > MAX_TITLE_LEN
+            || description.is_empty()
+            || description.len() > MAX_DESCRIPTION_LEN
+        {
+            return Err(ContractError::InvalidInput);
+        }
 
         let accept_deadline = now.checked_add(ACCEPT_WINDOW).unwrap_or(u64::MAX);
         // A deadline inside the acceptance window would let the freelancer
         // accept a project that can never be delivered (SCTS D-20).
-        require!(work_deadline.0 >= accept_deadline, ContractError::DeadlineExpired);
+        if work_deadline.0 < accept_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
 
         // Reserve pre-check before any write, so a thin reserve surfaces as a
         // typed E-14 instead of a panic from assert_solvent (SCTS D-16).
@@ -175,11 +184,11 @@ impl Contract {
             .checked_add(self.total_claimable)
             .and_then(|v| v.checked_add(amount))
             .unwrap_or(Yocto::MAX);
-        require!(
-            env::account_balance().as_yoctonear() >=
-                Self::storage_stake_after_write().saturating_add(needed),
-            ContractError::InsufficientReserve
-        );
+        if env::account_balance().as_yoctonear()
+            < Self::storage_stake_after_write().saturating_add(needed)
+        {
+            return Err(ContractError::InsufficientReserve);
+        }
 
         let id = self.next_project_id;
         self.next_project_id = id.checked_add(1).unwrap_or(u64::MAX);
@@ -216,7 +225,7 @@ impl Contract {
         self.index_add(&freelancer, Role::Freelancer, id);
         self.index_add(&arbiter, Role::Arbiter, id);
 
-        self.assert_solvent();
+        self.assert_solvent()?;
 
         // Event (SCTS §10). Emitted after the state is final.
         env::log_str(&format!(

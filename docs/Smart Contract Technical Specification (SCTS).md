@@ -4,7 +4,7 @@
 **Document Version:** 1.5 — Final
 **Status:** Approved
 **Date:** November 8, 2026
-**Revision:** v1.4 applies the fourth audit: `Balance` replaced with a local `Yocto` alias plus `NearToken` boundary unwrapping (D-24 — near-sdk 5 exports no `Balance` and `NearToken` has no `Sub`/`Mul`, so the old snippets could not compile), storage reserve figures corrected to the 6,000-byte bound (0.06 NEAR/project, 20 NEAR recommended), `credit()` plus Rust `Config`/`FundInvariants` defined, and `MAX_PROJECT_STORAGE_BYTES` demoted from "measured" to a declared bound guarded by AD-10. v1.3 applies the third audit: `work_deadline` typed `U64` so the frontend's string payload deserialises (D-22), deterministic `MAX_PROJECT_STORAGE_BYTES` so the `E-14` reserve check is implementable (D-23), `get_withdrawal_state` returns `WithdrawalRecordView` (the D-15 precision fix had missed it), missing `DeliverableView`/`EvidenceView`/`ResolutionView` defined, §7.3 numbering repaired, transition count corrected to 13, and the `ContractPaused` precedence raised to match `create_project`'s validation order. v1.2 applies the second independent audit: JSON DTOs so amounts and timestamps are strings (D-15, §4.3.1), explicit reserve pre-check (D-16), `withdraw` returning `Result<Promise, _>` with a documented fallback (D-17), lowercase `Role` wire format (D-18), `E-22` for admin recovery paths (D-19), and a work-deadline floor that prevents born-dead projects (D-20). v1.1 fixes: `resolution` is now written only on dispute paths (D-11), error codes split and given a precedence order (D-12, §11.1), `E-12` documented as event-only (§11.2), `get_claimable_per_project` renamed semantics fixed (§6.3), dependency versions updated to near-sdk 5.30 / near-workspaces 0.24.
+**Revision:** v1.5: crate renamed to `nescrow` (matches the repository) and MVP acceptance IDs moved to `MA-xx` to stop colliding with the Test Plan's `AC-xx`. v1.4 applies the fourth audit: `Balance` replaced with a local `Yocto` alias plus `NearToken` boundary unwrapping (D-24 — near-sdk 5 exports no `Balance` and `NearToken` has no `Sub`/`Mul`, so the old snippets could not compile), storage reserve figures corrected to the 6,000-byte bound (0.06 NEAR/project, 20 NEAR recommended), `credit()` plus Rust `Config`/`FundInvariants` defined, and `MAX_PROJECT_STORAGE_BYTES` demoted from "measured" to a declared bound guarded by AD-10. v1.3 applies the third audit: `work_deadline` typed `U64` so the frontend's string payload deserialises (D-22), deterministic `MAX_PROJECT_STORAGE_BYTES` so the `E-14` reserve check is implementable (D-23), `get_withdrawal_state` returns `WithdrawalRecordView` (the D-15 precision fix had missed it), missing `DeliverableView`/`EvidenceView`/`ResolutionView` defined, §7.3 numbering repaired, transition count corrected to 13, and the `ContractPaused` precedence raised to match `create_project`'s validation order. v1.2 applies the second independent audit: JSON DTOs so amounts and timestamps are strings (D-15, §4.3.1), explicit reserve pre-check (D-16), `withdraw` returning `Result<Promise, _>` with a documented fallback (D-17), lowercase `Role` wire format (D-18), `E-22` for admin recovery paths (D-19), and a work-deadline floor that prevents born-dead projects (D-20). v1.1 fixes: `resolution` is now written only on dispute paths (D-11), error codes split and given a precedence order (D-12, §11.1), `E-12` documented as event-only (§11.2), `get_claimable_per_project` renamed semantics fixed (§6.3), dependency versions updated to near-sdk 5.30 / near-workspaces 0.24.
 **Based on:** Functional Specification Document (FSD) v1.5 · State Transition Specification (STS) v1.5
 **Network:** NEAR Testnet
 **Target SDK:** `near-sdk` 5.x · Rust stable (2021 edition)
@@ -54,8 +54,8 @@ Every open question raised in the review draft has been resolved; see **§17 Dec
 ```toml
 # Cargo.toml
 [package]
-name = "near-escrow"
-version = "1.0.0"
+name = "nescrow"
+version = "0.1.0"
 edition = "2021"
 
 [lib]
@@ -1148,7 +1148,7 @@ cargo near build
 
 # deploy
 near deploy escrow.<account>.testnet \
-  target/near/near_escrow/near_escrow.wasm \
+  target/near/nescrow/nescrow.wasm \
   --initFunction 'new' \
   --initArgs '{"owner":"<account>.testnet"}'
 
