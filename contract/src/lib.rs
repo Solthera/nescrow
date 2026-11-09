@@ -1083,6 +1083,119 @@ impl Contract {
         self.next_project_id
     }
 
+    /// Paginated projects for one account in one role. `limit` is capped so a
+    /// caller cannot ask the node to serialise the whole history.
+    pub fn get_projects(
+        &self,
+        account: AccountId,
+        role: Role,
+        from_index: u32,
+        limit: u32,
+    ) -> Vec<ProjectView> {
+        let index = match role {
+            Role::Client => &self.client_index,
+            Role::Freelancer => &self.freelancer_index,
+            Role::Arbiter => &self.arbiter_index,
+        };
+        let Some(ids) = index.get(&account) else {
+            return Vec::new();
+        };
+        let take = limit.min(MAX_PAGE_LIMIT) as usize;
+        ids.iter()
+            .skip(from_index as usize)
+            .take(take)
+            .filter_map(|id| self.projects.get(id).map(ProjectView::from))
+            .collect()
+    }
+
+    /// Allocation per project for this account.
+    ///
+    /// Name says *allocated*, not "withdrawable": `claimable` is tracked per
+    /// account, so the contract cannot tell which project a past withdrawal
+    /// came from. These values do not shrink after a withdrawal — the only
+    /// withdrawable figure is `get_claimable` (SCTS §6.3).
+    pub fn get_claimable_per_project(&self, account: AccountId) -> Vec<ProjectClaim> {
+        let mut out = Vec::new();
+        for (role, index) in [
+            (Role::Client, &self.client_index),
+            (Role::Freelancer, &self.freelancer_index),
+        ] {
+            let Some(ids) = index.get(&account) else {
+                continue;
+            };
+            for id in ids {
+                let Some(p) = self.projects.get(id) else { continue };
+                let Some(d) = &p.distribution else { continue };
+                let allocated = match role {
+                    Role::Client => d.client_amount,
+                    _ => d.freelancer_amount,
+                };
+                if allocated == 0 {
+                    continue;
+                }
+                out.push(ProjectClaim {
+                    project_id: *id,
+                    role,
+                    allocated: U128::from(allocated),
+                    status: p.status,
+                });
+            }
+        }
+        out
+    }
+
+    /// Reputation derived from contract state only — there is no counter to
+    /// drift, and no profile a user can edit (SCTS §6.3).
+    ///
+    /// `total_value_as_freelancer` is what was **allocated**, not what has been
+    /// withdrawn: the amount is decided on-chain and should not depend on
+    /// whether the freelancer remembered to press Withdraw.
+    pub fn get_stats(&self, account: AccountId) -> Stats {
+        let client_ids = self.client_index.get(&account).cloned().unwrap_or_default();
+        let freelancer_ids = self
+            .freelancer_index
+            .get(&account)
+            .cloned()
+            .unwrap_or_default();
+
+        let mut completed_as_freelancer = 0u32;
+        let mut total_value = 0u128;
+        let mut disputes = 0u32;
+        let mut disputes_full = 0u32;
+
+        for id in &freelancer_ids {
+            let Some(p) = self.projects.get(id) else { continue };
+            if let Some(d) = &p.distribution {
+                total_value = total_value.saturating_add(d.freelancer_amount);
+                if d.freelancer_amount > 0 {
+                    completed_as_freelancer += 1;
+                }
+            }
+            if let Some(r) = &p.resolution {
+                disputes += 1;
+                if r.freelancer_percent == 100 {
+                    disputes_full += 1;
+                }
+            }
+        }
+
+        let refunds_as_client = client_ids
+            .iter()
+            .filter_map(|id| self.projects.get(id))
+            .filter(|p| p.status == ProjectStatus::Refunded)
+            .count() as u32;
+
+        Stats {
+            projects_as_client: client_ids.len() as u32,
+            projects_as_freelancer: freelancer_ids.len() as u32,
+            completed_as_freelancer,
+            total_value_as_freelancer: U128::from(total_value),
+            disputes_as_freelancer: disputes,
+            disputes_released_fully: disputes_full,
+            refunds_as_client,
+        }
+    }
+
     pub fn get_claimable(&self, account: AccountId) -> U128 {
         U128::from(self.claimable.get(&account).copied().unwrap_or(0))
     }
