@@ -8,7 +8,7 @@
 
 use near_sdk::store::LookupMap;
 use near_sdk::json_types::{U128, U64};
-use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise, PromiseResult};
+use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise};
 
 mod constants;
 mod errors;
@@ -958,7 +958,7 @@ impl Contract {
                 "on_withdraw".to_string(),
                 callback_args.into_bytes(),
                 NearToken::from_yoctonear(0),
-                Gas::from_tgas(10),
+                Gas::from_tgas(CALLBACK_GAS_TGAS),
             ));
 
         Ok(promise)
@@ -970,14 +970,17 @@ impl Contract {
     pub fn on_withdraw(&mut self, account: AccountId, amount: U128) {
         self.withdrawals.remove(&account);
 
-        match env::promise_result(0) {
-            PromiseResult::Successful(_) => {
+        // `promise_result` is deprecated: a large return payload can run the
+        // callback out of gas before it finishes reading. The checked variant
+        // bounds the read instead.
+        match env::promise_result_checked(0, 10_000) {
+            Ok(_) => {
                 Self::emit(
                     "withdraw_succeeded",
                     serde_json::json!({ "account": account.to_string(), "amount": amount.0.to_string() }),
                 );
             }
-            _ => {
+            Err(_) => {
                 // Give the balance back so the recipient can simply retry.
                 self.credit(&account, amount.0);
                 Self::emit(

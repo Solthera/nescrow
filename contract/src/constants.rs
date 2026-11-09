@@ -42,8 +42,14 @@ pub const MAX_DESCRIPTION_LEN: usize = 2_000;
 pub const MAX_LINK_LEN: usize = 512;
 pub const MAX_NOTE_LEN: usize = 1_024;
 
-/// Minimum gas for `withdraw`, which must also pay for its callback.
-pub const MIN_WITHDRAW_GAS_TGAS: u64 = 30;
+/// Gas handed to the `on_withdraw` callback receipt.
+///
+/// The 30 Tgas *minimum* on `withdraw` itself is a caller-side requirement, not
+/// something the contract can enforce as a typed error — sending too little
+/// simply fails the transaction, and the balance is untouched because the debit
+/// and the transfer happen in the same call. Frontend sends 50 Tgas
+/// (Integration Spec §3.3).
+pub const CALLBACK_GAS_TGAS: u64 = 10;
 
 /// Grace period before the owner may clear a stuck withdrawal (SCTS D-05).
 pub const STUCK_WITHDRAWAL_GRACE: u64 = 3_600 * NS_PER_SEC;
