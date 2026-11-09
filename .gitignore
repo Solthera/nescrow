@@ -1,0 +1,26 @@
+# Rust / contract
+target/
+**/*.rs.bk
+
+# Built artifacts (attach to GitHub Releases instead of committing)
+*.wasm
+neardev/
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+
+# Environment (never commit secrets; keep .env.example)
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
