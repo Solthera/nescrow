@@ -248,6 +248,157 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // Settlement (SCTS §8.2, D-11)
+    // -----------------------------------------------------------------------
+
+    /// Shared allocation + accounting. Percent is the freelancer's share.
+    ///
+    /// Rounding: `floor(amount * pct / 100)` to the freelancer, remainder to the
+    /// client, so the two parts always sum back to the escrow exactly (D-08).
+    /// Division before multiplication keeps `u128` from overflowing.
+    fn allocate(&mut self, p: &mut Project, freelancer_percent: u8) -> Result<(), ContractError> {
+        let pct = freelancer_percent as u128;
+        let share = (p.amount / 100)
+            .checked_mul(pct)
+            .and_then(|v| {
+                (p.amount % 100)
+                    .checked_mul(pct)
+                    .map(|r| v + r / 100)
+            })
+            .ok_or(ContractError::InvalidSettlementPercentage)?;
+        let remainder = p
+            .amount
+            .checked_sub(share)
+            .ok_or(ContractError::InvalidSettlementPercentage)?;
+
+        p.distribution = Some(Distribution {
+            freelancer_amount: share,
+            client_amount: remainder,
+        });
+
+        self.total_locked = self.total_locked.saturating_sub(p.amount);
+        self.total_claimable = self.total_claimable.saturating_add(p.amount);
+
+        let freelancer = p.freelancer.clone();
+        let client = p.client.clone();
+        if share > 0 {
+            self.credit(&freelancer, share);
+        }
+        if remainder > 0 {
+            self.credit(&client, remainder);
+        }
+
+        self.assert_solvent()
+    }
+
+    /// Rule-based settlement: approval, automatic release, rejection, refunds.
+    /// The percentage is fixed by the rules, so no `Resolution` is written —
+    /// there was no decision by a person (D-11).
+    fn settle_by_rule(&mut self, p: &mut Project, freelancer_percent: u8) -> Result<(), ContractError> {
+        p.resolution = None;
+        self.allocate(p, freelancer_percent)
+    }
+
+    /// Dispute settlement: arbiter decision or mutual agreement. The only
+    /// paths that produce a `Resolution`.
+    fn settle_by_decision(
+        &mut self,
+        p: &mut Project,
+        freelancer_percent: u8,
+        resolved_by: ResolutionKind,
+    ) -> Result<(), ContractError> {
+        p.resolution = Some(Resolution {
+            freelancer_percent,
+            resolved_by,
+            resolved_at: Self::now(),
+        });
+        self.allocate(p, freelancer_percent)
+    }
+
+    fn emit(event: &str, data: serde_json::Value) {
+        env::log_str(&format!(
+            "EVENT_JSON:{{\"standard\":\"nescrow\",\"version\":\"1.0.0\",\"event\":\"{}\",\"data\":{}}}",
+            event, data
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // M-02 / M-03 accept and reject (SCTS §6.2, STS §5.1 / §5.2A)
+    // -----------------------------------------------------------------------
+
+    /// The freelancer accepts the project. Starts the work clock, which is the
+    /// deadline the client set at creation.
+    #[handle_result]
+    pub fn accept_project(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.freelancer {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status == ProjectStatus::Accepted {
+            return Err(ContractError::AlreadyAccepted);
+        }
+        if p.status != ProjectStatus::Funded {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() >= p.accept_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
+
+        p.status = ProjectStatus::Accepted;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "project_accepted",
+            serde_json::json!({ "project_id": project_id, "freelancer": p.freelancer.to_string() }),
+        );
+        Ok(())
+    }
+
+    /// The freelancer rejects the project, which refunds the client in full.
+    #[handle_result]
+    pub fn reject_project(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.freelancer {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status == ProjectStatus::Accepted {
+            return Err(ContractError::AlreadyAccepted);
+        }
+        if p.status != ProjectStatus::Funded {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() >= p.accept_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
+
+        self.settle_by_rule(&mut p, 0)?;
+        p.status = ProjectStatus::Refunded;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Refunded",
+                "freelancer_amount": "0",
+                "client_amount": p.amount.to_string(),
+                "resolved_by": null
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
