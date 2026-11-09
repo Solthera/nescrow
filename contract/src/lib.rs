@@ -772,6 +772,155 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // M-12 arbiter_resolve, M-13 / M-14 mutual settlement
+    // (SCTS §6.2, STS §5.11 / §5.12, D-21)
+    // -----------------------------------------------------------------------
+
+    /// The arbiter sets the split. The window is enforced: after seven days the
+    /// arbiter loses the authority rather than being able to decide whenever it
+    /// likes (D-03).
+    #[handle_result]
+    pub fn arbiter_resolve(
+        &mut self,
+        project_id: u64,
+        freelancer_percent: u8,
+    ) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+        let now = Self::now();
+
+        if caller != p.arbiter {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Disputed {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if freelancer_percent > 100 {
+            return Err(ContractError::InvalidSettlementPercentage);
+        }
+        if now > p.dispute_opened_at.saturating_add(ARBITER_WINDOW) {
+            return Err(ContractError::ResolutionWindowExpired);
+        }
+
+        self.settle_by_decision(&mut p, freelancer_percent, ResolutionKind::Arbiter)?;
+        p.status = ProjectStatus::Resolved;
+        self.projects.insert(project_id, p.clone());
+
+        let distribution = p.distribution.clone();
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Resolved",
+                "freelancer_amount": distribution.as_ref().map(|d| d.freelancer_amount.to_string()),
+                "client_amount": distribution.as_ref().map(|d| d.client_amount.to_string()),
+                "resolved_by": "Arbiter",
+                "freelancer_percent": freelancer_percent
+            }),
+        );
+        Ok(())
+    }
+
+    /// Record the caller's proposed split. Overwritable by the same caller
+    /// until a settlement happens; it never moves funds on its own.
+    #[handle_result]
+    pub fn propose_settlement(
+        &mut self,
+        project_id: u64,
+        freelancer_percent: u8,
+    ) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if !p.is_party(&caller) {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Disputed {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if freelancer_percent > 100 {
+            return Err(ContractError::InvalidSettlementPercentage);
+        }
+
+        if caller == p.client {
+            p.client_settlement_proposal = Some(freelancer_percent);
+        } else {
+            p.freelancer_settlement_proposal = Some(freelancer_percent);
+        }
+        self.projects.insert(project_id, p);
+
+        Self::emit(
+            "settlement_proposed",
+            serde_json::json!({
+                "project_id": project_id,
+                "by": caller.to_string(),
+                "freelancer_percent": freelancer_percent
+            }),
+        );
+        Ok(())
+    }
+
+    /// Both sides agree — expressed as one party conceding to the other's
+    /// proposal in a single transaction (D-21). Only the counterparty's stored
+    /// proposal is compared; the caller's own earlier proposal is superseded
+    /// by this call.
+    #[handle_result]
+    pub fn settle_mutual(
+        &mut self,
+        project_id: u64,
+        freelancer_percent: u8,
+    ) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if !p.is_party(&caller) {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Disputed {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if freelancer_percent > 100 {
+            return Err(ContractError::InvalidSettlementPercentage);
+        }
+
+        let counterparty_proposal = if caller == p.client {
+            p.freelancer_settlement_proposal
+        } else {
+            p.client_settlement_proposal
+        };
+        if counterparty_proposal != Some(freelancer_percent) {
+            return Err(ContractError::SettlementMismatch);
+        }
+
+        self.settle_by_decision(&mut p, freelancer_percent, ResolutionKind::MutualSettlement)?;
+        p.status = ProjectStatus::Resolved;
+        self.projects.insert(project_id, p.clone());
+
+        let distribution = p.distribution.clone();
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Resolved",
+                "freelancer_amount": distribution.as_ref().map(|d| d.freelancer_amount.to_string()),
+                "client_amount": distribution.as_ref().map(|d| d.client_amount.to_string()),
+                "resolved_by": "MutualSettlement",
+                "freelancer_percent": freelancer_percent
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
