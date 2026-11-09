@@ -473,6 +473,89 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // M-06 approve / M-07 request_revision (SCTS §6.2, STS §5.5 / §5.6)
+    // -----------------------------------------------------------------------
+
+    /// The client accepts the work. Releases the full escrow to the freelancer.
+    #[handle_result]
+    pub fn approve_deliverable(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.client {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Delivered {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() >= p.review_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
+
+        self.settle_by_rule(&mut p, 100)?;
+        p.status = ProjectStatus::Released;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "settled",
+            serde_json::json!({
+                "project_id": project_id,
+                "status": "Released",
+                "freelancer_amount": p.amount.to_string(),
+                "client_amount": "0",
+                "resolved_by": null
+            }),
+        );
+        Ok(())
+    }
+
+    /// The client asks for changes. Extends the work deadline by three days
+    /// measured from *now*, not from the old deadline, so a request made in the
+    /// last hour of the review window still grants three full days (D-09).
+    #[handle_result]
+    pub fn request_revision(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.client {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status != ProjectStatus::Delivered {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if Self::now() >= p.review_deadline {
+            return Err(ContractError::DeadlineExpired);
+        }
+        if p.revision_count >= MAX_REVISIONS {
+            return Err(ContractError::RevisionLimitExceeded);
+        }
+
+        let now = Self::now();
+        p.revision_count += 1;
+        p.work_deadline = now.saturating_add(REVISION_EXTENSION);
+        p.revision_deadline = p.work_deadline;
+        p.review_deadline = 0;
+        p.status = ProjectStatus::RevisionRequested;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "revision_requested",
+            serde_json::json!({
+                "project_id": project_id,
+                "revision_count": p.revision_count,
+                "work_deadline": p.work_deadline.to_string()
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
