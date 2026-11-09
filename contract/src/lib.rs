@@ -10,9 +10,9 @@ use near_sdk::store::LookupMap;
 use near_sdk::json_types::{U128, U64};
 use near_sdk::{env, near, AccountId, Gas, NearToken, PanicOnDefault, Promise};
 
-mod constants;
-mod errors;
-mod model;
+pub mod constants;
+pub mod errors;
+pub mod model;
 
 use constants::*;
 use errors::ContractError;
@@ -277,7 +277,8 @@ impl Contract {
         });
 
         self.total_locked = self.total_locked.saturating_sub(p.amount);
-        self.total_claimable = self.total_claimable.saturating_add(p.amount);
+        // `total_claimable` is NOT touched here: `credit()` is its only writer
+        // (§5.2.2). Bumping it in both places double-counted every settlement.
 
         let freelancer = p.freelancer.clone();
         let client = p.client.clone();
