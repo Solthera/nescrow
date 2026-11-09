@@ -399,6 +399,80 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // M-05 submit_deliverable (SCTS §6.2, STS §5.3 / §5.9)
+    // -----------------------------------------------------------------------
+
+    /// The freelancer submits (or resubmits) the deliverable.
+    ///
+    /// One method covers both states on purpose: the guard differs only in which
+    /// deadline applies, and the effect is identical — status to `Delivered`
+    /// with a fresh 72-hour review window.
+    #[handle_result]
+    pub fn submit_deliverable(
+        &mut self,
+        project_id: u64,
+        link: String,
+        note: String,
+    ) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if caller != p.freelancer {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+
+        let now = Self::now();
+        let revision_index = match p.status {
+            ProjectStatus::Accepted => {
+                if now >= p.work_deadline {
+                    return Err(ContractError::DeadlineExpired);
+                }
+                0
+            }
+            ProjectStatus::RevisionRequested => {
+                if now >= p.revision_deadline {
+                    return Err(ContractError::DeadlineExpired);
+                }
+                p.revision_count
+            }
+            _ => return Err(ContractError::InvalidProjectState),
+        };
+
+        // Deadline is checked before the link so a late submission reports the
+        // reason the user cannot fix (SCTS §11.1).
+        if link.is_empty() || link.len() > MAX_LINK_LEN {
+            return Err(ContractError::InvalidDeliverable);
+        }
+        if note.len() > MAX_NOTE_LEN {
+            return Err(ContractError::InvalidDeliverable);
+        }
+
+        p.deliverable = Some(Deliverable {
+            link,
+            note,
+            submitted_at: now,
+            revision_index,
+        });
+        p.status = ProjectStatus::Delivered;
+        p.review_deadline = now.saturating_add(REVIEW_WINDOW);
+        p.revision_deadline = 0;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "deliverable_submitted",
+            serde_json::json!({
+                "project_id": project_id,
+                "revision_index": revision_index,
+                "review_deadline": p.review_deadline.to_string()
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
