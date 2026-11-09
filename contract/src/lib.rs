@@ -989,6 +989,89 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // M-17 top_up_reserve, M-18 set_paused, M-19 clear_stuck_withdrawal
+    // (SCTS §6.2, D-01 / D-02 / D-05 / D-19)
+    // -----------------------------------------------------------------------
+
+    /// Anyone may top up the storage reserve. Deliberately available while
+    /// paused: a pause is exactly when the reserve may need attention.
+    #[payable]
+    #[handle_result]
+    pub fn top_up_reserve(&mut self) -> Result<(), ContractError> {
+        let amount = env::attached_deposit().as_yoctonear();
+        if amount == 0 {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+        Self::emit(
+            "reserve_topped_up",
+            serde_json::json!({
+                "account": env::predecessor_account_id().to_string(),
+                "amount": amount.to_string()
+            }),
+        );
+        Ok(())
+    }
+
+    /// Owner-only emergency brake. Blocks project creation only: every path
+    /// that moves existing funds out keeps working, so pausing can never trap
+    /// user money (D-02).
+    #[handle_result]
+    pub fn set_paused(&mut self, paused: bool) -> Result<(), ContractError> {
+        if env::predecessor_account_id() != self.owner {
+            return Err(ContractError::NotOwner);
+        }
+        self.paused = paused;
+        Self::emit(
+            if paused { "paused" } else { "unpaused" },
+            serde_json::json!({ "by": env::predecessor_account_id().to_string() }),
+        );
+        Ok(())
+    }
+
+    /// Recovery for a withdrawal whose callback ran out of gas. Re-credits a
+    /// balance the contract itself debited, so it can never create money
+    /// (D-05). Fails loudly when there is nothing to clear (D-19).
+    #[handle_result]
+    pub fn clear_stuck_withdrawal(&mut self, account: AccountId) -> Result<(), ContractError> {
+        if env::predecessor_account_id() != self.owner {
+            return Err(ContractError::NotOwner);
+        }
+        let record = self
+            .withdrawals
+            .get(&account)
+            .cloned()
+            .ok_or(ContractError::NoWithdrawalInProgress)?;
+
+        if Self::now() < record.started_at.saturating_add(STUCK_WITHDRAWAL_GRACE) {
+            return Err(ContractError::GraceNotElapsed);
+        }
+
+        self.withdrawals.remove(&account);
+        self.credit(&account, record.amount);
+        Self::emit(
+            "withdrawal_cleared",
+            serde_json::json!({
+                "account": account.to_string(),
+                "amount": record.amount.to_string(),
+                "by": env::predecessor_account_id().to_string()
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // M-20 migrate
+    // -----------------------------------------------------------------------
+
+    /// State migration hook, reachable only through a redeploy.
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate() -> Self {
+        let old: Contract = env::state_read().expect("no state to migrate");
+        old
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
