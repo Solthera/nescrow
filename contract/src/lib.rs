@@ -669,6 +669,109 @@ impl Contract {
     }
 
     // -----------------------------------------------------------------------
+    // M-10 open_dispute / M-11 submit_evidence
+    // (SCTS §6.2, STS §5.7 / §5.10, D-14)
+    // -----------------------------------------------------------------------
+
+    /// Either party freezes the funds and hands the decision to the arbiter.
+    ///
+    /// No time guard in `REVISION_REQUESTED` (D-14): if the freelancer never
+    /// resubmits, the revision deadline passing would otherwise leave the
+    /// project with no reachable transition at all — no submit, no refund, no
+    /// arbiter — and the escrow would be locked forever with nobody at fault.
+    #[handle_result]
+    pub fn open_dispute(&mut self, project_id: u64) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+        let now = Self::now();
+
+        if !p.is_party(&caller) {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status.is_terminal() {
+            return Err(ContractError::AlreadyFinalized);
+        }
+        if p.status == ProjectStatus::Disputed {
+            return Err(ContractError::DisputeAlreadyActive);
+        }
+
+        match p.status {
+            ProjectStatus::Delivered => {
+                if now >= p.review_deadline {
+                    return Err(ContractError::DeadlineExpired);
+                }
+            }
+            ProjectStatus::RevisionRequested => {}
+            _ => return Err(ContractError::DisputeNotAllowed),
+        }
+
+        p.status = ProjectStatus::Disputed;
+        p.dispute_opened_at = now;
+        p.review_deadline = 0;
+        p.revision_deadline = 0;
+        self.projects.insert(project_id, p.clone());
+
+        Self::emit(
+            "dispute_opened",
+            serde_json::json!({ "project_id": project_id, "opened_by": caller.to_string() }),
+        );
+        Ok(())
+    }
+
+    /// A party files evidence once. Submitting again is rejected rather than
+    /// overwriting, so neither side can rewrite its story mid-dispute.
+    #[handle_result]
+    pub fn submit_evidence(
+        &mut self,
+        project_id: u64,
+        link: String,
+        note: String,
+    ) -> Result<(), ContractError> {
+        let mut p = self.project(project_id)?;
+        let caller = env::predecessor_account_id();
+
+        if !p.is_party(&caller) {
+            return Err(ContractError::Unauthorized);
+        }
+        if p.status != ProjectStatus::Disputed {
+            return Err(ContractError::InvalidProjectState);
+        }
+        if link.is_empty() || link.len() > MAX_LINK_LEN || note.len() > MAX_NOTE_LEN {
+            return Err(ContractError::InvalidEvidence);
+        }
+
+        let evidence = Evidence {
+            link,
+            note,
+            submitted_at: Self::now(),
+        };
+        let role = if caller == p.client {
+            if p.client_evidence.is_some() {
+                return Err(ContractError::EvidenceAlreadySubmitted);
+            }
+            p.client_evidence = Some(evidence);
+            "client"
+        } else {
+            if p.freelancer_evidence.is_some() {
+                return Err(ContractError::EvidenceAlreadySubmitted);
+            }
+            p.freelancer_evidence = Some(evidence);
+            "freelancer"
+        };
+        self.projects.insert(project_id, p);
+
+        Self::emit(
+            "evidence_submitted",
+            serde_json::json!({
+                "project_id": project_id,
+                "by": caller.to_string(),
+                "role": role
+            }),
+        );
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Views (SCTS §6.3)
     // -----------------------------------------------------------------------
 
