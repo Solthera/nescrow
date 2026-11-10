@@ -18,9 +18,10 @@ const ACCEPT_WINDOW: u64 = 48 * HOUR_NS;
 const REVIEW_WINDOW: u64 = 72 * HOUR_NS;
 const AMOUNT: u128 = 10 * NEAR;
 const MIN_ESCROW: u128 = NEAR / 10;
-// The mock does NOT credit `attached_deposit` to `account_balance`, so the test
-// environment has to hold a balance large enough for every project a test opens.
-// On-chain these two are linked; here they are set independently.
+// `VMContextBuilder::account_balance` is the balance *before* the call, and the
+// mock adds `attached_deposit` on top (probe: builder 10 NEAR + deposit 10 NEAR
+// was reported as 20 NEAR). Keeping this generous means the reserve check is out
+// of the way for tests that are not about the reserve.
 const RESERVE: u128 = 1_000 * NEAR;
 
 // `near_sdk::test_utils::accounts` only provides six entries (0..=5).
@@ -28,14 +29,18 @@ const OWNER: usize = 5;
 
 /// Contract balance is deliberately generous: the reserve check uses a worst
 /// case storage bound, so a starved balance would fail every creation with E-14.
-fn env(account: usize, deposit: u128, now: u64) {
+fn env_bal(account: usize, deposit: u128, now: u64, balance: u128) {
     testing_env!(VMContextBuilder::new()
         .current_account_id(accounts(0))
         .predecessor_account_id(accounts(account))
         .attached_deposit(NearToken::from_yoctonear(deposit))
-        .account_balance(NearToken::from_yoctonear(RESERVE))
+        .account_balance(NearToken::from_yoctonear(balance))
         .block_timestamp(now)
         .build());
+}
+
+fn env(account: usize, deposit: u128, now: u64) {
+    env_bal(account, deposit, now, RESERVE);
 }
 
 fn env_view(now: u64) {
@@ -1309,4 +1314,310 @@ fn rf08_double_refund_is_rejected() {
     let err = c.claim_no_response_refund(id).unwrap_err();
     assert_eq!(err.code(), "E-08");
     assert_eq!(claimable(&c, accounts(1)), AMOUNT, "refunded once, not twice");
+}
+
+// ===========================================================================
+// AD — admin surface (SCTS D-01 / D-02 / D-05 / D-19)
+// ===========================================================================
+
+#[test]
+fn ad01_thin_reserve_is_a_typed_error() {
+    // Pre-call balance zero, so the contract sees only the deposit and has no
+    // buffer for storage. The reserve pre-check must fire as E-14 rather than a
+    // panic from assert_solvent.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    env_bal(1, AMOUNT, now, 0);
+    let err = c
+        .create_project(
+            accounts(2),
+            accounts(3),
+            "Logo".into(),
+            "Brief".into(),
+            (now + 7 * DAY_NS).into(),
+        )
+        .unwrap_err();
+    assert_eq!(err.code(), "E-14");
+}
+
+#[test]
+fn ad02_top_up_reserve_is_accepted() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    env(4, NEAR, now);
+    c.top_up_reserve().unwrap();
+
+    env_view(now);
+    assert!(c.get_fund_invariants().ok);
+}
+
+#[test]
+fn ad02b_top_up_reserve_without_deposit_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    env(4, 0, now);
+    assert_eq!(c.top_up_reserve().unwrap_err().code(), "E-04");
+}
+
+#[test]
+fn ad03_pause_blocks_creation_but_not_existing_money() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+
+    env(OWNER, 0, now + 3 * DAY_NS);
+    c.set_paused(true).unwrap();
+
+    // creation blocked
+    env(1, AMOUNT, now + 3 * DAY_NS);
+    assert_eq!(
+        c.create_project(
+            accounts(2),
+            accounts(3),
+            "Blocked".into(),
+            "Brief".into(),
+            (now + 10 * DAY_NS).into(),
+        )
+        .unwrap_err()
+        .code(),
+        "E-15"
+    );
+
+    // withdrawal still works while paused
+    env(2, 0, now + 3 * DAY_NS);
+    assert!(c.withdraw().is_ok(), "pause must never trap funds");
+    assert_eq!(claimable(&c, accounts(2)), 0);
+    let _ = id;
+}
+
+#[test]
+fn ad04_non_owner_cannot_pause() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    env(1, 0, now);
+    assert_eq!(c.set_paused(true).unwrap_err().code(), "E-01");
+}
+
+#[test]
+fn ad05_clear_stuck_withdrawal_before_grace() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    env(2, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert!(c.withdraw().is_ok());
+
+    env(OWNER, 0, now + 2 * DAY_NS + 2 * HOUR_NS + 60 * 1_000_000_000);
+    assert_eq!(
+        c.clear_stuck_withdrawal(accounts(2)).unwrap_err().code(),
+        "E-17"
+    );
+}
+
+#[test]
+fn ad06_clear_stuck_withdrawal_restores_the_balance() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    let withdrawn_at = now + 2 * DAY_NS + 2 * HOUR_NS;
+    env(2, 0, withdrawn_at);
+    assert!(c.withdraw().is_ok());
+    assert_eq!(claimable(&c, accounts(2)), 0);
+
+    env(OWNER, 0, withdrawn_at + HOUR_NS + 1);
+    c.clear_stuck_withdrawal(accounts(2)).unwrap();
+
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "balance restored");
+    env_view(now);
+    assert!(c.get_withdrawal_state(accounts(2)).is_none());
+}
+
+#[test]
+fn ad09_clear_stuck_withdrawal_without_a_record() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    env(OWNER, 0, now);
+    assert_eq!(
+        c.clear_stuck_withdrawal(accounts(2)).unwrap_err().code(),
+        "E-22"
+    );
+}
+
+// ===========================================================================
+// INV — invariants and view correctness
+// ===========================================================================
+
+#[test]
+fn inv01_solvency_after_creation() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    for _ in 0..5 {
+        create_default(&mut c, now);
+    }
+    env_view(now);
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.locked.0, 5 * AMOUNT);
+    assert_eq!(inv.claimable.0, 0);
+    assert!(inv.ok);
+    assert!(inv.spendable.0 >= inv.locked.0 + inv.claimable.0);
+}
+
+#[test]
+fn inv02_solvency_after_settlement() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    env_view(now);
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.locked.0, 0);
+    assert_eq!(inv.claimable.0, AMOUNT);
+    assert!(inv.ok);
+}
+
+#[test]
+fn inv03_thirty_three_percent_sums_exactly() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.arbiter_resolve(id, 33).unwrap();
+
+    env_view(now);
+    let p = c.get_project(id).unwrap();
+    let d = p.distribution.unwrap();
+    assert_eq!(d.freelancer_amount.0 + d.client_amount.0, AMOUNT);
+    // floor to the freelancer, remainder to the client (D-08)
+    assert_eq!(d.freelancer_amount.0, AMOUNT / 100 * 33);
+    assert!(d.client_amount.0 >= d.freelancer_amount.0);
+}
+
+#[test]
+fn inv04_rounding_never_loses_a_yocto() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    // smallest allowed escrow: 0.1 NEAR
+    env(1, MIN_ESCROW, now);
+    let id = c
+        .create_project(
+            accounts(2),
+            accounts(3),
+            "Tiny".into(),
+            "Brief".into(),
+            (now + 7 * DAY_NS).into(),
+        )
+        .unwrap();
+    env(2, 0, now + HOUR_NS);
+    c.accept_project(id).unwrap();
+    env(2, 0, now + 2 * DAY_NS);
+    c.submit_deliverable(id, "https://example.com".into(), "".into())
+        .unwrap();
+    env(1, 0, now + 2 * DAY_NS + HOUR_NS);
+    c.open_dispute(id).unwrap();
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.arbiter_resolve(id, 3).unwrap();
+
+    env_view(now);
+    let d = c.get_project(id).unwrap().distribution.unwrap();
+    assert_eq!(d.freelancer_amount.0 + d.client_amount.0, MIN_ESCROW);
+}
+
+#[test]
+fn inv05_terminal_state_rejects_state_transitions() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(2, 0, at);
+    assert_eq!(c.accept_project(id).unwrap_err().code(), "E-08");
+    env(2, 0, at);
+    assert_eq!(c.submit_deliverable(id, "x".into(), "".into()).unwrap_err().code(), "E-08");
+    env(1, 0, at);
+    assert_eq!(c.approve_deliverable(id).unwrap_err().code(), "E-08");
+    env(1, 0, at);
+    assert_eq!(c.open_dispute(id).unwrap_err().code(), "E-08");
+    env(3, 0, at);
+    assert_eq!(c.arbiter_resolve(id, 50).unwrap_err().code(), "E-08");
+}
+
+#[test]
+fn inv10_allocation_survives_withdrawal() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+
+    env_view(now);
+    let before = c.get_claimable_per_project(accounts(2));
+    assert_eq!(before.len(), 1);
+    assert_eq!(before[0].allocated.0, AMOUNT);
+
+    env(2, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert!(c.withdraw().is_ok());
+
+    env_view(now);
+    let after = c.get_claimable_per_project(accounts(2));
+    assert_eq!(after[0].allocated.0, AMOUNT, "allocation is historical");
+    assert_eq!(after[0].project_id, id);
+    assert_eq!(c.get_claimable(accounts(2)).0, 0, "withdrawable is empty");
+}
+
+#[test]
+fn inv11_amounts_cross_the_json_boundary_as_strings() {
+    // The only test that catches the precision trap in D-15: a Rust-side u128
+    // comparison is happy either way, but JSON.parse in a browser is not.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env_view(now);
+    let view = c.get_project(id).unwrap();
+    let json = serde_json::to_string(&view).unwrap();
+
+    assert!(json.contains("\"amount\":\""), "amount must be a JSON string: {}", json);
+    assert!(json.contains("\"created_at\":\""), "timestamps must be JSON strings");
+    assert!(json.contains("\"work_deadline\":\""));
+    assert!(!json.contains("\"amount\":1"), "amount must not be a bare number");
+    assert!((view.amount.0 as f64) > 9e15, "value is genuinely above 2^53");
+}
+
+#[test]
+fn inv09_stats_are_derived_from_state() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+
+    // two released projects for bob
+    released_project(&mut c, now);
+    released_project(&mut c, now);
+
+    // one dispute resolved at 70%
+    let id = disputed_project(&mut c, now);
+    env(3, 0, now + 2 * DAY_NS + 30 * HOUR_NS);
+    c.arbiter_resolve(id, 70).unwrap();
+
+    env_view(now);
+    let stats = c.get_stats(accounts(2));
+    assert_eq!(stats.projects_as_freelancer, 3);
+    assert_eq!(stats.completed_as_freelancer, 3);
+    assert_eq!(stats.disputes_as_freelancer, 1);
+    assert_eq!(stats.disputes_released_fully, 0, "70% is not a full release");
+    assert_eq!(stats.total_value_as_freelancer.0, AMOUNT + AMOUNT + AMOUNT * 70 / 100);
+}
+
+#[test]
+fn views_report_project_lists_per_role() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    create_default(&mut c, now);
+    create_default(&mut c, now);
+
+    env_view(now);
+    assert_eq!(c.get_projects(accounts(1), Role::Client, 0, 10).len(), 2);
+    // pagination is capped and offset works
+    assert_eq!(c.get_projects(accounts(1), Role::Client, 1, 10).len(), 1);
+    assert_eq!(c.get_projects(accounts(1), Role::Client, 5, 10).len(), 0);
+    // an account with no projects gets an empty list, not a panic
+    assert_eq!(c.get_projects(accounts(4), Role::Client, 0, 10).len(), 0);
 }
