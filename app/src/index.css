@@ -145,4 +145,5 @@ section h2 { font-size: 16px; margin: 0 0 4px; letter-spacing: 0.01em; }
 .field-wide { grid-column: 1 / -1; }
 .field-error { color: var(--alarm); }
 .form-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+.btn-small { padding: 5px 12px; font-size: 12px; margin-top: 10px; }
 

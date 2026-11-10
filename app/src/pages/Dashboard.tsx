@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useWallet } from '../hooks/useWallet';
-import { getClaimable, getConfig, getFundInvariants, getProjects } from '../lib/near/contract';
+import { getClaimable, getConfig, getFundInvariants, getProjects, withdraw } from '../lib/near/contract';
 import { formatNear, shortAddress } from '../lib/format';
 import { mapError } from '../lib/errors';
 import { ProjectCard } from '../components/ProjectCard';
@@ -38,6 +38,19 @@ export function Dashboard() {
     refetchInterval: REFETCH_MS,
   });
 
+  const queryClient = useQueryClient();
+  const withdrawal = useMutation({
+    mutationFn: withdraw,
+    onSuccess: async () => {
+      // The contract debits before transferring; refetch instead of assuming.
+      await queryClient.invalidateQueries({ queryKey: ['claimable'] });
+      await queryClient.invalidateQueries({ queryKey: ['invariants'] });
+      await queryClient.invalidateQueries({ queryKey: ['projects'] });
+    },
+  });
+  const withdrawable = BigInt(claimable.data ?? '0');
+  const withdrawalError = withdrawal.error ? mapError(withdrawal.error) : null;
+
   const claims = [...(asClient.data ?? []), ...(asFreelancer.data ?? [])].sort(
     (a, b) => b.project_id - a.project_id,
   );
@@ -58,6 +71,21 @@ export function Dashboard() {
             <span className="stat-value">
               {accountId ? (claimable.data ? `${formatNear(claimable.data)} NEAR` : '—') : 'connect'}
             </span>
+            {accountId && withdrawable > 0n && (
+              <button
+                className="btn btn-small"
+                onClick={() => withdrawal.mutate()}
+                disabled={withdrawal.isPending}
+              >
+                {withdrawal.isPending ? 'Withdrawing…' : 'Withdraw'}
+              </button>
+            )}
+            {withdrawalError && (
+              <small className="field-error">
+                {withdrawalError.code ? `${withdrawalError.code}: ` : ''}
+                {withdrawalError.message}
+              </small>
+            )}
           </div>
           <div className="stat">
             <span className="stat-label">Minimum escrow</span>
