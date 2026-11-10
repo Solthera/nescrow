@@ -131,6 +131,18 @@ near deploy <your-account>.testnet target/wasm32-unknown-unknown/release/nescrow
 
 For the RPC, the contract uses `https://test.rpc.fastnear.com` (the older `rpc.testnet.fastnear.com` now answers `429 DEPRECATED`). near-cli reads it from `NEAR_TESTNET_RPC`. On a machine where IPv6 is broken, prefix Node tooling with `NODE_OPTIONS=--dns-result-order=ipv4first`.
 
+### Run the frontend
+
+```bash
+cd app
+npm install
+npm run dev        # http://localhost:5173
+```
+
+`.env` is committed and contains only public values (testnet contract id, public RPC URL). The app refuses to boot on any network other than testnet.
+
+Two things about the client libraries are worth knowing before you touch the code: `near-api-js` v7 and wallet-selector v10 no longer fit the v5 `Contract({ signer })` shape, so reads go through `JsonRpcProvider.callFunction` and writes through `wallet.signAndSendTransaction` — one adapter, `app/src/lib/near/contract.ts`. And both libraries assume Node globals (`Buffer`, `process`), which is why `src/polyfills.ts` is imported before anything else and `vite.config.ts` defines `global`.
+
 ### Try the live contract
 
 ```bash
