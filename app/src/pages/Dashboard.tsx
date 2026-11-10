@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useWallet } from '../hooks/useWallet';
 import { getClaimable, getConfig, getFundInvariants, getProjects } from '../lib/near/contract';
@@ -100,6 +101,9 @@ export function Dashboard() {
             When someone names you as the freelancer — or you fund an escrow — the project appears
             here.
           </p>
+          <Link className="btn" to="/new">
+            Fund your first escrow
+          </Link>
         </section>
       ) : (
         <section className="projects">

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { ENV } from '../config/env';
 import { shortAddress } from '../lib/format';
 import { useWallet } from '../hooks/useWallet';
@@ -26,9 +27,14 @@ export function Header() {
           {shortAddress(ENV.contractId, 10)}
         </a>
         {accountId ? (
-          <button className="btn btn-ghost" onClick={disconnect} title="Disconnect">
-            {shortAddress(accountId)}
-          </button>
+          <>
+            <Link className="btn" to="/new">
+              New escrow
+            </Link>
+            <button className="btn btn-ghost" onClick={disconnect} title="Disconnect">
+              {shortAddress(accountId)}
+            </button>
+          </>
         ) : (
           <button className="btn" onClick={connect} disabled={connecting}>
             {connecting ? 'Loading…' : 'Connect wallet'}

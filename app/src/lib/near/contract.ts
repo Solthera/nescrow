@@ -29,6 +29,7 @@ const TGAS = 1_000_000_000_000n;
 export const GAS_DEFAULT = 30n * TGAS;
 /** Not 30: the surplus pays for the `on_withdraw` callback (SCTS §8.4). */
 export const GAS_WITHDRAW = 50n * TGAS;
+export const GAS_CREATE = 30n * TGAS;
 export const DEPOSIT_ZERO = 0n;
 
 let provider: JsonRpcProvider | null = null;
@@ -99,3 +100,19 @@ export const getProjects = (account: string, role: Role, fromIndex = 0, limit = 
 // --- writes ---------------------------------------------------------------
 
 export const withdraw = () => call('withdraw', {}, { gas: GAS_WITHDRAW });
+
+export interface CreateProjectArgs {
+  freelancer: string;
+  arbiter: string;
+  title: string;
+  description: string;
+  /** Chain timestamp as a string: the contract takes U64 (SCTS D-22). */
+  work_deadline: string;
+}
+
+/**
+ * One FunctionCall whose deposit *is* the escrow (SCTS D-06). There is no separate
+ * amount argument, so a second Transfer action would send the money twice.
+ */
+export const createProject = (args: CreateProjectArgs, depositYocto: bigint) =>
+  call('create_project', { ...args }, { gas: GAS_CREATE, deposit: depositYocto });
