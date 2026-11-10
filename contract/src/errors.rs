@@ -6,7 +6,19 @@
 
 use near_sdk::serde::Serialize;
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize)]
+/// `#[handle_result]` turns an `Err` into `FunctionError::panic(&err)`.
+///
+/// The blanket impl in near-sdk (for `T: AsRef<str>`) only calls the
+/// `env::panic_str` host function when `cfg(near)` is set; without it — and
+/// near-sdk ships no build script that sets it — the fallback is a bare Rust
+/// `panic!()`, which the wasm runtime reports as an opaque
+/// "WebAssembly trap: unreachable opcode" with **no** error code. Deriving
+/// `FunctionError` instead always goes through `panic_str(to_string())`, so the
+/// published `E-xx` code reaches the caller regardless of build flags.
+///
+/// Deriving also means `AsRef<str>` must NOT be implemented here: it would
+/// collide with near-sdk's blanket impl (coherence error).
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, near_sdk::FunctionError)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ContractError {
     // --- authorization -----------------------------------------------------
@@ -119,48 +131,9 @@ impl ContractError {
 
 impl std::fmt::Display for ContractError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_ref())
-    }
-}
-
-/// `#[handle_result]` requires the error type to satisfy near-sdk's
-/// `FunctionError`, which is bounded on `AsRef<str>`.
-///
-/// That forces a *static* string per variant, so the published code is baked
-/// into each literal rather than formatted at runtime. Keep these in sync with
-/// `code()`: these strings are what a caller actually receives on-chain.
-impl AsRef<str> for ContractError {
-    fn as_ref(&self) -> &str {
-        match self {
-            Self::Unauthorized => "E-01: unauthorized action",
-            Self::NotOwner => "E-01: only the contract owner can do this",
-            Self::InvalidProjectState => "E-02: invalid project state",
-            Self::AlreadyFinalized => "E-08: project already finalized",
-            Self::DeadlineExpired => "E-03: deadline expired",
-            Self::ReviewPeriodNotExpired => "E-11: review period not expired",
-            Self::ResolutionWindowExpired => "E-13: arbiter resolution window expired",
-            Self::GraceNotElapsed => "E-17: grace period has not elapsed",
-            Self::InvalidEscrowAmount => "E-04: invalid escrow amount",
-            Self::InvalidSettlementPercentage => "E-09: invalid settlement percentage",
-            Self::InsufficientReserve => "E-14: insufficient storage reserve",
-            Self::AlreadyAccepted => "E-05: project already accepted",
-            Self::RevisionLimitExceeded => "E-06: revision limit exceeded",
-            Self::DisputeAlreadyActive => "E-07: dispute already active",
-            Self::DisputeNotAllowed => "E-20: dispute not allowed in this state",
-            Self::EvidenceAlreadySubmitted => "E-10: evidence already submitted",
-            Self::SettlementMismatch => "E-16: proposals do not match",
-            Self::InvalidParticipants => {
-                "E-04: client, freelancer and arbiter must be distinct"
-            }
-            Self::InvalidDeliverable => "E-10: invalid deliverable",
-            Self::InvalidEvidence => "E-10: invalid evidence",
-            Self::InvalidInput => "E-10: invalid input",
-            Self::PayoutFailed => "E-12: payout failed",
-            Self::NothingToWithdraw => "E-18: nothing to withdraw",
-            Self::WithdrawInProgress => "E-19: withdrawal already in progress",
-            Self::NoWithdrawalInProgress => "E-22: no withdrawal in progress",
-            Self::ContractPaused => "E-15: contract paused",
-            Self::UnknownProject => "E-21: unknown project",
-        }
+        // `code: message` is the exact string the caller receives on-chain, e.g.
+        // "E-18: nothing to withdraw". The Integration Spec matches on the code
+        // prefix, so the format must not change without a spec revision.
+        write!(f, "{}: {}", self.code(), self.message())
     }
 }

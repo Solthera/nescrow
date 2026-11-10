@@ -1,0 +1,17 @@
+# Building this contract with plain `cargo build --target wasm32-unknown-unknown`
+# silently produces an artifact that is NOT safe for on-chain use.
+#
+# near-sdk switches between two modes at compile time:
+#   - `cfg(near)`                -> on-chain host functions (what a real contract needs)
+#   - `target_family = "wasm"`   -> pure-Rust fallbacks, explicitly "not for on-chain use"
+#
+# `cfg(near)` is normally injected by `cargo near build`. Without it, an error
+# returned from a `#[handle_result]` method skips `env::panic_str` and becomes a
+# bare Rust `panic!()`, which the runtime reports as
+#   "WebAssembly trap: An `unreachable` opcode was executed."
+# with no E-code at all — the frontend's error mapping then has nothing to read.
+#
+# Pinning the flag per-target (instead of globally) keeps host builds — `cargo
+# test`, `cargo check` — on the unit-testing code path.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "near"]
