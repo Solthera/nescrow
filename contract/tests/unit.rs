@@ -393,6 +393,32 @@ fn sc08_unknown_project_is_reported() {
     assert!(c.get_project(9999).is_none());
 }
 
+/// Project taken all the way to `Delivered`.
+fn delivered_project(c: &mut Contract, now: u64) -> u64 {
+    let id = accepted_project(c, now);
+    let submit_at = now + 2 * DAY_NS;
+    env(2, 0, submit_at);
+    c.submit_deliverable(id, "https://example.com/logo".into(), "v1".into())
+        .unwrap();
+    id
+}
+
+/// Project taken all the way to `Released` (client approved).
+fn released_project(c: &mut Contract, now: u64) -> u64 {
+    let id = delivered_project(c, now);
+    env(1, 0, now + 2 * DAY_NS + HOUR_NS);
+    c.approve_deliverable(id).unwrap();
+    id
+}
+
+/// Project taken all the way to `Disputed`.
+fn disputed_project(c: &mut Contract, now: u64) -> u64 {
+    let id = delivered_project(c, now);
+    env(1, 0, now + 2 * DAY_NS + HOUR_NS);
+    c.open_dispute(id).unwrap();
+    id
+}
+
 // ===========================================================================
 // SD — submit deliverable (FSD F-06, STS 5.3 / 5.9)
 // ===========================================================================
@@ -497,4 +523,240 @@ fn sd07_oversized_link_is_rejected() {
         .submit_deliverable(id, "x".repeat(513), "".into())
         .unwrap_err();
     assert_eq!(err.code(), "E-10");
+}
+
+// ===========================================================================
+// WD — pull-payment withdrawal (SCTS §5.3 / §8.4, STS §9)
+//
+// The callback itself needs a real receipt, so `on_withdraw` is exercised at L2.
+// Here we prove the state machine: the debit, the in-progress guard and the
+// no-double-pay guarantee.
+// ===========================================================================
+
+#[test]
+fn wd01_withdraw_moves_claimable_to_wallet_pending() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let _id = released_project(&mut c, now);
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "allocation recorded");
+
+    env(2, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    // `Promise` implements no `Debug`, so unwrap/unwrap_err are unavailable.
+    assert!(c.withdraw().is_ok(), "withdraw should be accepted");
+
+    // Debit happens before the transfer is created.
+    assert_eq!(claimable(&c, accounts(2)), 0);
+
+    env_view(now);
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.claimable.0, 0, "claimable bucket emptied");
+    assert_eq!(inv.locked.0, 0);
+    assert!(inv.ok);
+
+    let record = c.get_withdrawal_state(accounts(2)).expect("record stays until the callback");
+    assert_eq!(record.amount.0, AMOUNT);
+}
+
+#[test]
+fn wd02_withdraw_twice_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    env(2, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert!(c.withdraw().is_ok());
+    let err = match c.withdraw() {
+        Ok(_) => panic!("second withdraw must fail"),
+        Err(e) => e,
+    };
+    assert_eq!(err.code(), "E-18", "nothing left to withdraw");
+}
+
+#[test]
+fn wd03_withdraw_without_balance_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    env(4, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    let err = match c.withdraw() {
+        Ok(_) => panic!("withdraw must fail without a balance"),
+        Err(e) => e,
+    };
+    assert_eq!(err.code(), "E-18");
+}
+
+#[test]
+fn sc07_withdraw_in_progress_blocks_a_second_transfer() {
+    // A second settlement lands while the first withdrawal is still awaiting its
+    // callback. Without the in-progress marker this would start a second transfer
+    // for the same account.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    env(2, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert!(c.withdraw().is_ok());
+
+    // Second project settles to the same freelancer while the first is in flight.
+    env(1, AMOUNT, now + 3 * DAY_NS);
+    let id2 = c
+        .create_project(
+            accounts(2),
+            accounts(3),
+            "Second job".into(),
+            "Brief".into(),
+            (now + 10 * DAY_NS).into(),
+        )
+        .unwrap();
+    env(2, 0, now + 3 * DAY_NS + HOUR_NS);
+    c.accept_project(id2).unwrap();
+    env(2, 0, now + 4 * DAY_NS);
+    c.submit_deliverable(id2, "https://example.com/2".into(), "".into())
+        .unwrap();
+    env(1, 0, now + 4 * DAY_NS + HOUR_NS);
+    c.approve_deliverable(id2).unwrap();
+
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "new money credited");
+    env(2, 0, now + 5 * DAY_NS);
+    let err = match c.withdraw() {
+        Ok(_) => panic!("must not start a second transfer"),
+        Err(e) => e,
+    };
+    assert_eq!(err.code(), "E-19");
+}
+
+// ===========================================================================
+// DS — disputes and evidence (FSD F-11/F-12, STS 5.7 / 5.10)
+// ===========================================================================
+
+#[test]
+fn ds01_client_opens_dispute() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    let at = now + 2 * DAY_NS + HOUR_NS;
+    env(1, 0, at);
+    c.open_dispute(id).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+    env_view(at);
+    let p = c.get_project(id).unwrap();
+    assert_eq!(p.dispute_opened_at.0, at);
+    assert_eq!(p.review_deadline.0, 0, "review window cleared");
+}
+
+#[test]
+fn ds02_freelancer_opens_dispute_during_revision() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    let at = now + 2 * DAY_NS + HOUR_NS;
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+
+    env(2, 0, at + HOUR_NS);
+    c.open_dispute(id).unwrap();
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+}
+
+#[test]
+fn ds03_dispute_before_deliverable_is_not_allowed() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = accepted_project(&mut c, now);
+
+    env(1, 0, now + HOUR_NS);
+    let err = c.open_dispute(id).unwrap_err();
+    assert_eq!(err.code(), "E-20");
+}
+
+#[test]
+fn ds04_dispute_after_review_expiry_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + REVIEW_WINDOW + 1);
+    let err = c.open_dispute(id).unwrap_err();
+    assert_eq!(err.code(), "E-03");
+}
+
+#[test]
+fn ds10_dispute_twice_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    let err = c.open_dispute(id).unwrap_err();
+    assert_eq!(err.code(), "E-07");
+}
+
+#[test]
+fn ds11_dispute_allowed_after_revision_deadline() {
+    // D-14: a missed revision deadline must not strand the escrow. After the
+    // deadline the freelancer cannot resubmit and the client cannot refund, so
+    // the dispute is the only reachable transition and must stay open.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    let at = now + 2 * DAY_NS + HOUR_NS;
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+
+    env(1, 0, at + 4 * DAY_NS); // revision window is 3 days
+    c.open_dispute(id).unwrap();
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+}
+
+#[test]
+fn ds05_both_parties_submit_evidence() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.submit_evidence(id, "https://client.example/evidence".into(), "late".into())
+        .unwrap();
+    env(2, 0, now + 2 * DAY_NS + 3 * HOUR_NS);
+    c.submit_evidence(id, "https://bob.example/proof".into(), "on time".into())
+        .unwrap();
+
+    env_view(now);
+    let p = c.get_project(id).unwrap();
+    assert!(p.client_evidence.is_some());
+    assert!(p.freelancer_evidence.is_some());
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+}
+
+#[test]
+fn ds06_evidence_twice_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.submit_evidence(id, "https://a.example".into(), "".into())
+        .unwrap();
+    let err = c
+        .submit_evidence(id, "https://b.example".into(), "".into())
+        .unwrap_err();
+    assert_eq!(err.code(), "E-10");
+}
+
+#[test]
+fn ds07_non_party_cannot_submit_evidence() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(4, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    let err = c
+        .submit_evidence(id, "https://x.example".into(), "".into())
+        .unwrap_err();
+    assert_eq!(err.code(), "E-01");
 }
