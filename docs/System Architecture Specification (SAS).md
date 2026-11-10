@@ -4,7 +4,7 @@
 **Document Version:** 1.5 — Final
 **Status:** Approved
 **Date:** November 8, 2026
-**Revision:** v1.4 from the fourth audit: the create-project validation line uses `min_escrow` and the 48-hour window instead of a hardcoded 0.1 NEAR and "future", and §12.2 reserve figures reflect the 6,000-byte bound (≈166 projects per 10 NEAR). v1.3 from the third audit: the claimable-balance refresh row no longer mentions event pushes, the AI payload sends `work_deadline` as a string (a JS number would arrive truncated), and the profile page lists every view it actually needs. v1.2 from the second independent audit: the withdrawal flow no longer pretends contract events reach the browser (it polls tx status and refetches), the create-project flow states how `project_id` is read from `SuccessValue`, AI rate limiting and caching are documented as requiring a shared KV store, and `/admin` records that pause is a CLI action. v1.1: `create_project` is a single `FunctionCall` with `deposit` (the earlier two-action snippet would have sent the escrow twice), and the withdraw gas row now states what the app actually sends.
+**Revision:** v1.5 from the first testnet deployment: the RPC endpoint is `https://test.rpc.fastnear.com` (the previously documented FastNear hostnames are deprecated or dead), the CLI variable is `NEAR_TESTNET_RPC`, and the storage section carries the measured 520 bytes/project next to the 6,000-byte bound. v1.4 from the fourth audit: the create-project validation line uses `min_escrow` and the 48-hour window instead of a hardcoded 0.1 NEAR and "future", and §12.2 reserve figures reflect the 6,000-byte bound (≈166 projects per 10 NEAR). v1.3 from the third audit: the claimable-balance refresh row no longer mentions event pushes, the AI payload sends `work_deadline` as a string (a JS number would arrive truncated), and the profile page lists every view it actually needs. v1.2 from the second independent audit: the withdrawal flow no longer pretends contract events reach the browser (it polls tx status and refetches), the create-project flow states how `project_id` is read from `SuccessValue`, AI rate limiting and caching are documented as requiring a shared KV store, and `/admin` records that pause is a CLI action. v1.1: `create_project` is a single `FunctionCall` with `deposit` (the earlier two-action snippet would have sent the escrow twice), and the withdraw gas row now states what the app actually sends.
 **Based on:** PRD v1.0 · FSD v1.5 · STS v1.5 · SCTS v1.5
 **Network:** NEAR Testnet
 
@@ -498,7 +498,7 @@ Response (strict schema, validated in the function **and** in the client):
 # app/.env
 VITE_NETWORK_ID=testnet
 VITE_CONTRACT_ID=escrow.farel.testnet
-VITE_RPC_URL=https://testnet.fastnear.com
+VITE_RPC_URL=https://test.rpc.fastnear.com
 VITE_AI_ENDPOINT=/api/dispute-summary
 VITE_EXPLORER_URL=https://testnet.nearblocks.io
 
@@ -608,6 +608,8 @@ Which buttons render is computed from **(status × caller role × time)**, not f
 
 Approximately **0.06 NEAR per project**, derived from the worst-case bound in SCTS D-23 (6,000 bytes × `1e19` yocto/byte). A 10 NEAR reserve therefore covers ≈166 projects, and the recommended demo funding is **20 NEAR (≈333 projects)** — see SCTS §5.2.1. `get_fund_invariants()` is displayed on the read-only `/admin` page for monitoring.
 
+**Measured on testnet:** creating a project grew `storage_usage` by **520 bytes** (280,295 → 280,815), i.e. ≈0.0052 NEAR — roughly 11× under the bound. The bound stays at 6,000 bytes on purpose: it is a refusal threshold, not a prediction, and being conservative only makes the reserve check stricter (AD-10 asserts the measured delta stays under it).
+
 ## 12.3 Performance Targets
 
 | Metric | Target |
@@ -680,9 +682,11 @@ Static SPA deployed from GitHub, with the AI serverless function in the same pro
 
 ### D-02 — Dedicated RPC (FastNear), not the public endpoint
 
-`VITE_RPC_URL = https://testnet.fastnear.com`.
+`VITE_RPC_URL = https://test.rpc.fastnear.com`.
 
-*Rationale:* the public `rpc.testnet.near.org` rate-limits aggressively. A failed view call in front of judges is the single easiest way to lose a demo. A dedicated testnet endpoint is free and removes that risk class entirely.
+*Rationale:* the public `rpc.testnet.near.org` rate-limits aggressively, and on the demo machine it was unreachable over IPv6 (connect timeouts; `--dns-result-order=ipv4first` is needed for Node tooling). A dedicated testnet endpoint is free and removes that risk class entirely.
+
+*Correction from deployment:* `rpc.testnet.fastnear.com` and `https://testnet.fastnear.com` both fail now — the former answers `-429` with "WARNING! THIS ENDPOINT IS DEPRECATED", the latter does not respond at all. `https://test.rpc.fastnear.com` answers `status` correctly and is what the contract, the CLI and the app use. For the CLI, the variable is `NEAR_TESTNET_RPC` (near-cli 4.x ignores `NEAR_CLI_TESTNET_RPC_SERVER_URL`).
 
 ### D-03 — Wallet modules: MyNearWallet, Meteor, Here, Sender
 

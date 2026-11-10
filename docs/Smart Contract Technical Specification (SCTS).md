@@ -4,7 +4,7 @@
 **Document Version:** 1.6 — Final
 **Status:** Approved
 **Date:** November 8, 2026
-**Revision:** v1.6 records the corrections found by the first real compile (D-25) and marks the snippets as toolchain-verified. v1.5: crate renamed to `nescrow` (matches the repository) and MVP acceptance IDs moved to `MA-xx` to stop colliding with the Test Plan's `AC-xx`. v1.4 applies the fourth audit: `Balance` replaced with a local `Yocto` alias plus `NearToken` boundary unwrapping (D-24 — near-sdk 5 exports no `Balance` and `NearToken` has no `Sub`/`Mul`, so the old snippets could not compile), storage reserve figures corrected to the 6,000-byte bound (0.06 NEAR/project, 20 NEAR recommended), `credit()` plus Rust `Config`/`FundInvariants` defined, and `MAX_PROJECT_STORAGE_BYTES` demoted from "measured" to a declared bound guarded by AD-10. v1.3 applies the third audit: `work_deadline` typed `U64` so the frontend's string payload deserialises (D-22), deterministic `MAX_PROJECT_STORAGE_BYTES` so the `E-14` reserve check is implementable (D-23), `get_withdrawal_state` returns `WithdrawalRecordView` (the D-15 precision fix had missed it), missing `DeliverableView`/`EvidenceView`/`ResolutionView` defined, §7.3 numbering repaired, transition count corrected to 13, and the `ContractPaused` precedence raised to match `create_project`'s validation order. v1.2 applies the second independent audit: JSON DTOs so amounts and timestamps are strings (D-15, §4.3.1), explicit reserve pre-check (D-16), `withdraw` returning `Result<Promise, _>` with a documented fallback (D-17), lowercase `Role` wire format (D-18), `E-22` for admin recovery paths (D-19), and a work-deadline floor that prevents born-dead projects (D-20). v1.1 fixes: `resolution` is now written only on dispute paths (D-11), error codes split and given a precedence order (D-12, §11.1), `E-12` documented as event-only (§11.2), `get_claimable_per_project` renamed semantics fixed (§6.3), dependency versions updated to near-sdk 5.30 / near-workspaces 0.24.
+**Revision:** v1.7 records the first testnet deployment: errors only reach the chain as `E-xx` text when the build sets `cfg(near)`, so the error type derives `FunctionError` and the flag is pinned per-target (D-26). v1.6 records the corrections found by the first real compile (D-25) and marks the snippets as toolchain-verified. v1.5: crate renamed to `nescrow` (matches the repository) and MVP acceptance IDs moved to `MA-xx` to stop colliding with the Test Plan's `AC-xx`. v1.4 applies the fourth audit: `Balance` replaced with a local `Yocto` alias plus `NearToken` boundary unwrapping (D-24 — near-sdk 5 exports no `Balance` and `NearToken` has no `Sub`/`Mul`, so the old snippets could not compile), storage reserve figures corrected to the 6,000-byte bound (0.06 NEAR/project, 20 NEAR recommended), `credit()` plus Rust `Config`/`FundInvariants` defined, and `MAX_PROJECT_STORAGE_BYTES` demoted from "measured" to a declared bound guarded by AD-10. v1.3 applies the third audit: `work_deadline` typed `U64` so the frontend's string payload deserialises (D-22), deterministic `MAX_PROJECT_STORAGE_BYTES` so the `E-14` reserve check is implementable (D-23), `get_withdrawal_state` returns `WithdrawalRecordView` (the D-15 precision fix had missed it), missing `DeliverableView`/`EvidenceView`/`ResolutionView` defined, §7.3 numbering repaired, transition count corrected to 13, and the `ContractPaused` precedence raised to match `create_project`'s validation order. v1.2 applies the second independent audit: JSON DTOs so amounts and timestamps are strings (D-15, §4.3.1), explicit reserve pre-check (D-16), `withdraw` returning `Result<Promise, _>` with a documented fallback (D-17), lowercase `Role` wire format (D-18), `E-22` for admin recovery paths (D-19), and a work-deadline floor that prevents born-dead projects (D-20). v1.1 fixes: `resolution` is now written only on dispute paths (D-11), error codes split and given a precedence order (D-12, §11.1), `E-12` documented as event-only (§11.2), `get_claimable_per_project` renamed semantics fixed (§6.3), dependency versions updated to near-sdk 5.30 / near-workspaces 0.24.
 **Based on:** Functional Specification Document (FSD) v1.5 · State Transition Specification (STS) v1.5
 **Network:** NEAR Testnet
 **Target SDK:** `near-sdk` 5.x · Rust stable (2021 edition)
@@ -1026,7 +1026,13 @@ pub enum ContractError {
 "E-04: invalid escrow amount"
 ```
 
-**`#[handle_result]` requires `AsRef<str>`.** near-sdk's `FunctionError` is bounded on it, so a variant cannot build its message with `format!` — each one must return a `&'static str` that already contains the code. The reference implementation keeps a single `AsRef<str>` match with literals like `"E-14: insufficient storage reserve"` and routes `Display` through it, so there is exactly one place where the text lives (D-25).
+**The error type derives `FunctionError`.** `#[handle_result]` routes an `Err` through `FunctionError::panic(&err)`, and the reference implementation derives that trait on `ContractError`, whose `panic` always goes to `env::panic_str(&self.to_string())`. `AsRef<str>` is deliberately **not** implemented: near-sdk has a blanket `impl<T: AsRef<str>> FunctionError for T` that only calls `env::panic_str` under `cfg(near)` and otherwise does `eprintln!` + `panic!()`, which reports as an opaque wasm trap with no code at all (D-26). Deriving also collides with that blanket impl, so the two cannot coexist.
+
+The message that reaches a caller is therefore:
+
+```
+Smart contract panicked: E-04: invalid escrow amount
+```
 
 Codes `E-01`–`E-12` come from FSD §7. `E-13`–`E-22` are additions introduced by this specification and must be documented in the frontend error catalogue.
 
@@ -1401,8 +1407,20 @@ Internal state uses `pub type Yocto = u128`. Values from `env::account_balance()
 
 *Rationale:* near-sdk 5 removed `Balance` (verified against docs.rs 5.30.1 — the crate root has no such item; `near-contract-standards` keeps a local `pub type Balance = u128` that is not re-exported). `NearToken` also implements no `Add`/`Sub`/`Mul`/`Div`, so both `env::account_balance() - stake` and `env::storage_byte_cost() * bytes` fail to compile. Storing `NearToken` in state would additionally require Borsh coverage the SDK version does not guarantee for it, and would still force unwrapping at every arithmetic site — so the boundary unwrap is the minimum viable fix, not a stylistic choice.
 
+### D-26 — Errors reach the chain as `E-xx` text, which requires `cfg(near)`
+
+`ContractError` derives `near_sdk::FunctionError`, and the wasm build pins `--cfg near` via `contract/.cargo/config.toml`.
+
+*Rationale:* the first testnet deployment returned **every** failure as `WebAssembly trap: An unreachable opcode was executed` — no code, no message, so the frontend's error catalogue had nothing to map and each rejection would have looked like a broken contract. Unit tests could not catch it: they call the method and match the Rust `Err`, never crossing the `FunctionError::panic` boundary.
+
+The cause is a compile-time switch inside near-sdk. `cfg(near)` means "use on-chain host functions"; `target_family = "wasm"` without it means "pure-Rust fallbacks, not for on-chain use" (near-sdk states this in its own `compile_error!` text). The blanket `FunctionError` impl takes the `env::panic_str` branch only under `cfg(near)`; otherwise it runs `eprintln!` + `panic!()`, and `panic = "abort"` compiles that to a bare `unreachable`. `cfg(near)` is injected by `cargo near build` — near-sdk ships no build script that sets it — so a plain `cargo build --target wasm32-unknown-unknown` silently produces the wrong mode.
+
+Two changes, both verified on testnet: deriving `FunctionError` makes error reporting independent of the flag, and pinning `--cfg near` for the wasm target only (not globally, so `cargo test` keeps the unit-testing path) keeps the rest of the SDK in on-chain mode. Confirmed after redeploy: `Smart contract panicked: E-08: project already finalized`, `E-01: unauthorized action`, `E-18: nothing to withdraw`.
+
+*Consequence for the frontend:* the code must be extracted from the panic text (match `E-\d\d`), not compared against the whole string.
+
 # 18. Document Status
 
-This specification is **approved and final (v1.5)**. It supersedes all earlier versions and is the authoritative implementation reference for the NEAR Escrow smart contract.
+This specification is **approved and final (v1.7)**. It supersedes all earlier versions and is the authoritative implementation reference for the NEAR Escrow smart contract.
 
 Next document: **04 — System Architecture Specification**.

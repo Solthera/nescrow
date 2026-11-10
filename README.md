@@ -91,19 +91,53 @@ The project is spec-first: the contract is a direct implementation of these docu
 
 Honest snapshot — this README will be updated as pieces land.
 
-- [x] Specification set complete (v1.5), reviewed across five audit passes
-- [ ] Smart contract implementation
-- [ ] Contract test suite (138 cases, 102 mandatory)
-- [ ] Testnet deployment
+- [x] Specification set complete (v1.7), reviewed across five audit passes
+- [x] Smart contract implementation — 31 methods, 0 warnings
+- [x] Contract test suite — 113 unit tests green; 110 of 138 planned cases automated
+- [x] Testnet deployment
 - [ ] Frontend
 - [ ] AI dispute summary (optional)
 - [ ] Demo video
 
-**Contract address (testnet):** not deployed yet.
+**Contract address (testnet):** [`nescrow-escrow.testnet`](https://testnet.nearblocks.io/address/nescrow-escrow.testnet)
+
+Live and tested end-to-end: a full approval flow and a full dispute flow (2 NEAR, arbiter 70/30 → 1.4/0.6 exactly) both ran on chain, including the pull-payment callback. Explorer: [deploy tx](https://testnet.nearblocks.io/txns/3kgZnQ14V7Gnhw14xtrJab1rCVU9xbQMSf6fNRib2Tpt).
+
+Demo accounts: `nescrow-client.testnet`, `nescrow-freelancer.testnet`, `nescrow-arbiter.testnet` (10 NEAR each). The contract's own balance is the storage reserve — no user funds are ever custodied by an operator.
+
+**Deployment history, unfiltered.** An earlier instance at `nescrow-demo.testnet` was deployed from a wasm built without `cfg(near)`. It worked, but every error arrived as an opaque wasm trap, and one counter (`total_claimable`) drifted by 1 NEAR because a withdrawal on that build did not persist its decrement. The build was fixed (see below), the state was not patched — it was discarded, because a derived counter that cannot be recomputed from storage cannot be honestly repaired. The contract was redeployed clean on `nescrow-escrow.testnet`; the old account still exists and is not used by anything.
 
 ## Running locally
 
-Not available yet — the contract and app are still being implemented. Once they land, this section will contain the exact commands to build the contract, deploy to testnet, and run the frontend.
+### Build the contract
+
+```bash
+cd contract
+cargo test                              # 113 unit tests
+cargo build --release --target wasm32-unknown-unknown
+```
+
+The wasm lands at `contract/target/wasm32-unknown-unknown/release/nescrow.wasm` (~278 KB).
+
+> **Do not build with a bare `cargo build --target wasm32-unknown-unknown` on an older toolchain or without `contract/.cargo/config.toml`.** near-sdk switches code paths on `cfg(near)`: with it, errors call `env::panic_str` and reach the caller as `E-18: nothing to withdraw`; without it, they become a bare `unreachable` trap with no code at all. The config file pins the flag for the wasm target (and only that target, so `cargo test` still runs the unit-testing path). `cargo near build` sets the same flag if you prefer the official tool.
+
+### Deploy to testnet
+
+```bash
+near create-account <your-account>.testnet --useFaucet --initialBalance 10
+near deploy <your-account>.testnet target/wasm32-unknown-unknown/release/nescrow.wasm \
+  --initFunction new --initArgs '{"owner":"<your-account>.testnet"}'
+```
+
+For the RPC, the contract uses `https://test.rpc.fastnear.com` (the older `rpc.testnet.fastnear.com` now answers `429 DEPRECATED`). near-cli reads it from `NEAR_TESTNET_RPC`. On a machine where IPv6 is broken, prefix Node tooling with `NODE_OPTIONS=--dns-result-order=ipv4first`.
+
+### Try the live contract
+
+```bash
+export NEAR_TESTNET_RPC=https://test.rpc.fastnear.com
+near view nescrow-escrow.testnet get_project '{"project_id":0}'
+near view nescrow-escrow.testnet get_fund_invariants
+```
 
 ## Scope boundaries
 

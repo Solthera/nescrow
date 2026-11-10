@@ -462,6 +462,25 @@ Rationale: the happy path first establishes the scaffolding; negative tests foll
 
 ---
 
+## 7.5 Real-chain evidence (testnet, first deployment)
+
+Unit tests stop at the Rust `Err`/`Ok` boundary; a few cases can only be closed on a real chain. Recorded here so "passing" means observed, not assumed.
+
+| Case | What was observed | Status |
+|---|---|---|
+| WD-01 | `withdraw` debited the caller and created the transfer; balance rose by exactly the withdrawn amount | pass |
+| WD-02 | Second `withdraw` returned `E-18` — as text on chain, not just as a Rust variant | pass |
+| WD-09 | `get_withdrawal_state` returned `null` after the callback, and `claimable` was `0` | pass |
+| AD-10 | `storage_usage` grew by **520 bytes** per project (bound: 6,000) | pass |
+| INV-11 | `amount`, `created_at`, `work_deadline` came back as JSON strings | pass |
+| SC-01/SC-02/SC-03 | `E-01` and `E-08` surfaced as `Smart contract panicked: E-08: project already finalized` | pass |
+| AP/RV/AR/RF/DS/AB/MS | Both a full approval flow and a full dispute flow (2 NEAR, arbiter 70/30 → 1.4/0.6 exact) ran end-to-end | pass |
+| WD-05 (low gas) | Not exercised — needs a deliberately underfunded call | **open** |
+| WD-06 (two withdrawals racing) | Not exercised — needs two signers in the same block | **open** |
+| WD-07 (failed transfer restores balance) | Not exercised — needs an account that refuses the transfer | **open** |
+
+Finding from this run, now fixed and re-verified (SCTS D-26): with a wasm built without `cfg(near)`, **every** failure arrived as `WebAssembly trap: An unreachable opcode was executed` — no code, no message. The fix was validated by re-running the three error probes above on the redeployed contract.
+
 # 8. Exit Criteria (Definition of Done)
 
 Testing is complete only when **all** of the following hold:

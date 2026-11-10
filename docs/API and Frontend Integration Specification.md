@@ -618,6 +618,19 @@ Mandatory for irreversible actions:
 
 The contract returns errors shaped like `"E-XX: message"`. The frontend maps by code.
 
+**Read the code, not the string.** A failed call never arrives bare. The RPC wraps it, and the wrapper text is not part of the contract's interface:
+
+```
+Smart contract panicked: E-18: nothing to withdraw
+```
+
+Two consequences for the adapter:
+
+1. Extract with `raw.match(/E-\d{2}/)` and map that. Never compare the whole message, and never match on the human sentence — the wording may change while the code is frozen.
+2. Anything without an `E-\d{2}` (a bare `WebAssembly trap`, a timeout, a wallet rejection) must fall through to the `(unknown)` row. A contract deployed without `cfg(near)` produces exactly that for **every** error, so this fallback is also the symptom to look for when all failures suddenly become generic (see SCTS D-26).
+
+Payments are never pushed by the contract, so `E-12` cannot be returned from a settlement call: a failed transfer surfaces on the `withdraw` callback and restores the balance. The user's fix is always "withdraw again", not "reopen the dispute".
+
 | Code | UI message | Suggested action |
 |---|---|---|
 | E-01 | You are not allowed to do this for this project. | Connect with the correct account. |
