@@ -760,3 +760,237 @@ fn ds07_non_party_cannot_submit_evidence() {
         .unwrap_err();
     assert_eq!(err.code(), "E-01");
 }
+
+// ===========================================================================
+// AB — arbiter resolution (FSD F-13, STS 5.11)
+// ===========================================================================
+
+#[test]
+fn ab01_arbiter_splits_seventy_thirty() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.arbiter_resolve(id, 70).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Resolved);
+
+    let seven = AMOUNT * 70 / 100;
+    let three = AMOUNT - seven;
+    assert_eq!(claimable(&c, accounts(2)), seven);
+    assert_eq!(claimable(&c, accounts(1)), three);
+
+    env_view(now);
+    let p = c.get_project(id).unwrap();
+    let r = p.resolution.expect("resolution recorded");
+    assert_eq!(r.freelancer_percent, 70);
+
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.locked.0, 0, "escrow left the locked bucket");
+    assert_eq!(inv.claimable.0, AMOUNT, "nothing created or lost");
+    assert!(inv.ok);
+}
+
+#[test]
+fn ab02_percentage_above_hundred_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    let err = c.arbiter_resolve(id, 101).unwrap_err();
+    assert_eq!(err.code(), "E-09");
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+}
+
+#[test]
+fn ab03_non_arbiter_cannot_resolve() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(4, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    let err = c.arbiter_resolve(id, 50).unwrap_err();
+    assert_eq!(err.code(), "E-01");
+}
+
+#[test]
+fn ab04_other_arbiter_cannot_resolve() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    // accounts(4) is not the registered arbiter for this project.
+    env(4, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert_eq!(c.arbiter_resolve(id, 50).unwrap_err().code(), "E-01");
+}
+
+#[test]
+fn ab05_resolution_after_seven_days_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let opened = now + 2 * DAY_NS + HOUR_NS;
+    let window = 7 * DAY_NS;
+
+    env(3, 0, opened + window + 1);
+    let err = c.arbiter_resolve(id, 50).unwrap_err();
+    assert_eq!(err.code(), "E-13");
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+}
+
+#[test]
+fn ab06_resolution_at_exact_seven_day_boundary_is_allowed() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let opened = now + 2 * DAY_NS + HOUR_NS;
+    let window = 7 * DAY_NS;
+
+    env(3, 0, opened + window);
+    c.arbiter_resolve(id, 50).unwrap();
+    assert_eq!(status(&c, id), ProjectStatus::Resolved);
+}
+
+#[test]
+fn ab07_decision_is_immutable() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(3, 0, at);
+    c.arbiter_resolve(id, 40).unwrap();
+    let before = claimable(&c, accounts(2));
+
+    env(3, 0, at + HOUR_NS);
+    let err = c.arbiter_resolve(id, 100).unwrap_err();
+    assert_eq!(err.code(), "E-08");
+
+    assert_eq!(claimable(&c, accounts(2)), before, "split unchanged");
+}
+
+#[test]
+fn ab08_extreme_percentages() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.arbiter_resolve(id, 0).unwrap();
+
+    assert_eq!(claimable(&c, accounts(2)), 0, "freelancer gets nothing");
+    assert_eq!(claimable(&c, accounts(1)), AMOUNT, "client gets everything");
+}
+
+// ===========================================================================
+// MS — mutual settlement (FSD F-14, STS 5.12, D-21)
+// ===========================================================================
+
+#[test]
+fn ms01_both_parties_agree() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(1, 0, at);
+    c.propose_settlement(id, 60).unwrap();
+    env(2, 0, at + HOUR_NS);
+    c.settle_mutual(id, 60).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Resolved);
+    let six = AMOUNT * 60 / 100;
+    assert_eq!(claimable(&c, accounts(2)), six);
+    assert_eq!(claimable(&c, accounts(1)), AMOUNT - six);
+
+    env_view(at);
+    let r = c.get_project(id).unwrap().resolution.unwrap();
+    assert_eq!(r.freelancer_percent, 60);
+}
+
+#[test]
+fn ms02_mismatched_percentage_does_not_settle() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(1, 0, at);
+    c.propose_settlement(id, 60).unwrap();
+    env(2, 0, at + HOUR_NS);
+    let err = c.settle_mutual(id, 70).unwrap_err();
+
+    assert_eq!(err.code(), "E-16");
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+    assert_eq!(claimable(&c, accounts(2)), 0, "nothing allocated");
+}
+
+#[test]
+fn ms03_one_party_cannot_count_as_both_approvals() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(1, 0, at);
+    c.propose_settlement(id, 50).unwrap();
+    env(1, 0, at + HOUR_NS);
+    let err = c.settle_mutual(id, 50).unwrap_err();
+    assert_eq!(err.code(), "E-16", "needs the counterparty's proposal");
+}
+
+#[test]
+fn ms04_proposal_can_be_updated_before_settling() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(1, 0, at);
+    c.propose_settlement(id, 40).unwrap();
+    env(1, 0, at + HOUR_NS);
+    c.propose_settlement(id, 55).unwrap();
+    env(2, 0, at + 2 * HOUR_NS);
+    c.settle_mutual(id, 55).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Resolved);
+}
+
+#[test]
+fn ms08_a_party_can_concede_to_the_counterparty() {
+    // D-21: alice proposed 60, bob proposed 70, then bob accepts alice's 60.
+    // Bob's own stored 70 is superseded by the call itself.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(1, 0, at);
+    c.propose_settlement(id, 60).unwrap();
+    env(2, 0, at + HOUR_NS);
+    c.propose_settlement(id, 70).unwrap();
+
+    env(2, 0, at + 2 * HOUR_NS);
+    c.settle_mutual(id, 60).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Resolved);
+    env_view(at);
+    let r = c.get_project(id).unwrap().resolution.unwrap();
+    assert_eq!(r.freelancer_percent, 60, "settled at the accepted number");
+}
+
+#[test]
+fn ms07_arbiter_inactivity_leaves_funds_locked() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+    let opened = now + 2 * DAY_NS + HOUR_NS;
+
+    env_view(opened + 8 * DAY_NS);
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.locked.0, AMOUNT, "still escrowed, not auto-split");
+    assert_eq!(inv.claimable.0, 0, "no 50/50 fallback exists");
+    assert_eq!(status(&c, id), ProjectStatus::Disputed);
+}
