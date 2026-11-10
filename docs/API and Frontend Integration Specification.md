@@ -215,7 +215,7 @@ export interface WithdrawalRecord {
 
 export interface ProjectClaim {
   project_id: number;
-  role: 'client' | 'freelancer';   // wire format is lowercase (SCTS D-18)
+  role: Role;   // wire format is lowercase (SCTS D-18); get_projects also accepts 'arbiter'
   allocated: U128;   // historical allocation, NOT a remaining balance
   status: ProjectStatus;
 }
@@ -228,7 +228,7 @@ export interface ProjectClaim {
 3. Nullable concepts (`review_deadline = 0`, `dispute_opened_at = 0`) are mapped to `null` in the adapter layer rather than leaked as raw `0`.
 4. `deadline === 0` **always** means "not applicable". The `isApplicable(nanos)` helper must be checked before any time comparison.
 5. `resolution` is `null` for `Released` and `Refunded`. Those statuses are reached by rule, not by a decision, so no arbiter or settlement is recorded (SCTS D-11). Render the "decided by" block only when `resolution !== null`.
-6. `ProjectClaim.allocated` is a historical allocation. It does **not** shrink when the account withdraws. Never sum it and present it as withdrawable (SCTS §6.3).
+6. `ProjectClaim.allocated` is a historical allocation. It does **not** shrink when the account withdraws, and it is **0 until a settlement writes a distribution**. Never sum it and present it as withdrawable (SCTS §6.3), and never render it as the project's value — that is `amount` from `get_project`.
 7. The contract guarantees these fields arrive as **strings** (`U128`/`U64`, SCTS D-15). If a number ever arrives, that is a contract regression: log it and fall into the page's error state instead of silently `String()`-ing a value that may already be truncated. The adapter's `String()` is a safety net, not a conversion step.
 8. `role` in `get_projects` and in `ProjectClaim` is lowercase (`"client" | "freelancer" | "arbiter"`), matching `#[serde(rename_all = "lowercase")]` on the contract enum (SCTS D-18). Do not send `"Client"`.
 

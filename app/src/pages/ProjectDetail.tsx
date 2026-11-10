@@ -39,6 +39,20 @@ export function ProjectDetail() {
     refetchInterval: REFETCH_MS,
   });
 
+  if (!Number.isFinite(projectId)) {
+    return (
+      <main className="page">
+        <Link className="back" to="/">
+          ← all projects
+        </Link>
+        <div className="notice notice-error">
+          <strong>This project id is not a number, so there is nothing to read.</strong>
+          <span>Open a project from your dashboard instead.</span>
+        </div>
+      </main>
+    );
+  }
+
   if (project.isLoading) {
     return (
       <main className="page">

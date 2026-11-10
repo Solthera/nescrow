@@ -75,7 +75,12 @@ export function mapError(error: unknown): MappedError {
     return {
       code,
       message: 'Something went wrong while communicating with the contract.',
-      action: code ? undefined : 'If every action fails like this, the deployed build may be missing its error reporting.',
+      // Only a bare wasm trap means the build lost its error reporting (SCTS D-26).
+      // Anything else without a code is a normal failure: rejected wallet, timeout,
+      // or arguments the contract could not deserialise.
+      action: /unreachable|wasm trap/i.test(raw)
+        ? 'Every action failing with an unreachable trap means the deployed build was compiled without cfg(near).'
+        : undefined,
       raw,
     };
   }

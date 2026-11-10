@@ -1089,13 +1089,18 @@ impl Contract {
 
     /// Paginated projects for one account in one role. `limit` is capped so a
     /// caller cannot ask the node to serialise the whole history.
+    ///
+    /// Returns `ProjectClaim`, not `ProjectView` (SCTS §6.3, Integration §4.1):
+    /// a list view needs the id, the caller's role, the recorded allocation and
+    /// the status — not both evidence links and the full brief for every row. The
+    /// detail page fetches `get_project` for the one project it displays.
     pub fn get_projects(
         &self,
         account: AccountId,
         role: Role,
         from_index: u32,
         limit: u32,
-    ) -> Vec<ProjectView> {
+    ) -> Vec<ProjectClaim> {
         let index = match role {
             Role::Client => &self.client_index,
             Role::Freelancer => &self.freelancer_index,
@@ -1108,7 +1113,20 @@ impl Contract {
         ids.iter()
             .skip(from_index as usize)
             .take(take)
-            .filter_map(|id| self.projects.get(id).map(ProjectView::from))
+            .filter_map(|id| {
+                self.projects.get(id).map(|p| ProjectClaim {
+                    project_id: p.id,
+                    role: role.clone(),
+                    // Recorded allocation for this caller's side; 0 until a
+                    // settlement writes a distribution.
+                    allocated: U128::from(match (role.clone(), p.distribution.as_ref()) {
+                        (Role::Client, Some(d)) => d.client_amount,
+                        (Role::Freelancer, Some(d)) => d.freelancer_amount,
+                        _ => 0,
+                    }),
+                    status: p.status,
+                })
+            })
             .collect()
     }
 

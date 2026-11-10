@@ -13,6 +13,14 @@ export function ProjectCard({ claim }: { claim: ProjectClaim }) {
 
   const counterparty =
     claim.role === 'client' ? project.data?.freelancer : project.data?.client;
+  // `allocated` is 0 until a settlement writes a distribution, so it is not the
+  // project's value — the escrow amount is (SCTS §6.3).
+  const allocation = BigInt(claim.allocated ?? '0');
+  const escrowAmount = project.data?.amount ?? claim.allocated;
+
+  // Defensive: an undefined id used to render "/p/undefined" and then hit the
+  // contract with `project_id: null`. Better to show nothing than a dead card.
+  if (claim.project_id === undefined || claim.project_id === null) return null;
 
   return (
     <Link className="card card-link" to={`/p/${claim.project_id}`}>
@@ -26,9 +34,15 @@ export function ProjectCard({ claim }: { claim: ProjectClaim }) {
         <code>{counterparty ?? '…'}</code>
       </p>
       <div className="card-bottom">
-        <span className="amount">{formatNear(claim.allocated)} NEAR</span>
+        <span className="amount">{formatNear(escrowAmount)} NEAR</span>
         <span className="muted small">
-          {claim.role === 'client' ? 'client' : 'freelancer'}
+          {allocation > 0n
+            ? `allocated ${formatNear(allocation)}`
+            : claim.role === 'client'
+              ? 'client'
+              : claim.role === 'freelancer'
+                ? 'freelancer'
+                : 'arbiter'}
         </span>
       </div>
     </Link>

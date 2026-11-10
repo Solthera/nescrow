@@ -107,7 +107,8 @@ export interface WithdrawalRecord {
 
 export interface ProjectClaim {
   project_id: number;
-  role: 'client' | 'freelancer';
+  /** get_projects accepts 'arbiter' as well, and echoes it back. */
+  role: Role;
   /** Historical allocation, NOT a remaining balance (SCTS §6.3). */
   allocated: U128;
   status: ProjectStatus;

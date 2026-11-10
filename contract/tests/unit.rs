@@ -289,7 +289,14 @@ fn cp_creates_indexes_per_role() {
     assert_eq!(c.get_projects(accounts(1), Role::Client, 0, 10).len(), 1);
     assert_eq!(c.get_projects(accounts(2), Role::Freelancer, 0, 10).len(), 1);
     assert_eq!(c.get_projects(accounts(3), Role::Arbiter, 0, 10).len(), 1);
-    assert_eq!(c.get_projects(accounts(1), Role::Client, 0, 10)[0].id, id);
+    // Integration §4.1: the list returns ProjectClaim, not ProjectView. This
+    // assertion used to read `.id` — the shape the contract actually returned —
+    // which is why a spec/implementation mismatch survived a green suite.
+    let claims = c.get_projects(accounts(1), Role::Client, 0, 10);
+    assert_eq!(claims[0].project_id, id);
+    assert_eq!(claims[0].role, Role::Client);
+    assert_eq!(claims[0].status, ProjectStatus::Funded);
+    assert_eq!(claims[0].allocated.0, 0, "nothing allocated before settlement");
 }
 
 // ===========================================================================
