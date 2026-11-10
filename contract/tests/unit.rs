@@ -994,3 +994,319 @@ fn ms07_arbiter_inactivity_leaves_funds_locked() {
     assert_eq!(inv.claimable.0, 0, "no 50/50 fallback exists");
     assert_eq!(status(&c, id), ProjectStatus::Disputed);
 }
+
+// ===========================================================================
+// AP — approve deliverable (FSD F-07, STS 5.5)
+// ===========================================================================
+
+#[test]
+fn ap01_approve_releases_the_escrow() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + HOUR_NS);
+    c.approve_deliverable(id).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Released);
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT);
+    assert_eq!(claimable(&c, accounts(1)), 0);
+
+    env_view(now);
+    let p = c.get_project(id).unwrap();
+    let d = p.distribution.expect("distribution recorded");
+    assert_eq!(d.freelancer_amount.0, AMOUNT);
+    assert_eq!(d.client_amount.0, 0);
+    assert!(p.resolution.is_none(), "rule-based settlement has no resolution");
+}
+
+#[test]
+fn ap02_non_client_cannot_approve() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(4, 0, now + 2 * DAY_NS + HOUR_NS);
+    assert_eq!(c.approve_deliverable(id).unwrap_err().code(), "E-01");
+}
+
+#[test]
+fn ap03_approve_in_wrong_state() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = accepted_project(&mut c, now);
+
+    env(1, 0, now + HOUR_NS);
+    assert_eq!(c.approve_deliverable(id).unwrap_err().code(), "E-02");
+}
+
+#[test]
+fn ap04_double_approval_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert_eq!(c.approve_deliverable(id).unwrap_err().code(), "E-08");
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "still paid exactly once");
+}
+
+#[test]
+fn ap05_approval_at_review_boundary_is_expired() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    env(1, 0, submitted + REVIEW_WINDOW);
+    assert_eq!(c.approve_deliverable(id).unwrap_err().code(), "E-03");
+}
+
+// ===========================================================================
+// RV — request revision (FSD F-08, STS 5.6 / 5.9)
+// ===========================================================================
+
+#[test]
+fn rv01_revision_extends_from_now() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let at = now + 2 * DAY_NS + HOUR_NS;
+
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::RevisionRequested);
+    env_view(at);
+    let p = c.get_project(id).unwrap();
+    assert_eq!(p.revision_count, 1);
+    assert_eq!(p.work_deadline.0, at + 3 * DAY_NS, "three days from now, not from the old deadline");
+    assert_eq!(p.review_deadline.0, 0);
+}
+
+#[test]
+fn rv02_third_revision_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let mut at = now + 2 * DAY_NS + HOUR_NS;
+
+    for i in 0..2 {
+        env(1, 0, at);
+        c.request_revision(id).unwrap();
+        env(2, 0, at + HOUR_NS);
+        c.submit_deliverable(id, format!("https://example.com/v{}", i + 1), "".into())
+            .unwrap();
+        at += 2 * HOUR_NS;
+    }
+
+    env_view(at);
+    let p = c.get_project(id).unwrap();
+    assert_eq!(p.revision_count, 2);
+
+    env(1, 0, at);
+    assert_eq!(c.request_revision(id).unwrap_err().code(), "E-06");
+}
+
+#[test]
+fn rv03_resubmission_restarts_review_window() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let at = now + 2 * DAY_NS + HOUR_NS;
+
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+
+    let resubmit_at = at + DAY_NS;
+    env(2, 0, resubmit_at);
+    c.submit_deliverable(id, "https://example.com/v2".into(), "fixed".into())
+        .unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Delivered);
+    env_view(resubmit_at);
+    let p = c.get_project(id).unwrap();
+    assert_eq!(p.deliverable.unwrap().revision_index, 1);
+    assert_eq!(p.review_deadline.0, resubmit_at + REVIEW_WINDOW);
+    assert_eq!(p.revision_deadline.0, 0);
+}
+
+#[test]
+fn rv04_revision_after_review_expiry_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    env(1, 0, submitted + REVIEW_WINDOW);
+    assert_eq!(c.request_revision(id).unwrap_err().code(), "E-03");
+}
+
+#[test]
+fn rv05_non_client_cannot_request_revision() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(2, 0, now + 2 * DAY_NS + HOUR_NS);
+    assert_eq!(c.request_revision(id).unwrap_err().code(), "E-01");
+}
+
+#[test]
+fn rv08_revision_in_wrong_state() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = accepted_project(&mut c, now);
+
+    env(1, 0, now + HOUR_NS);
+    assert_eq!(c.request_revision(id).unwrap_err().code(), "E-02");
+}
+
+// ===========================================================================
+// AR — automatic release (FSD F-09, STS 5.8)
+// ===========================================================================
+
+#[test]
+fn ar01_anyone_can_release_after_review_expires() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    env(4, 0, submitted + REVIEW_WINDOW + 1);
+    c.release_after_review(id).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Released);
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "caller gets nothing");
+    assert_eq!(claimable(&c, accounts(4)), 0);
+}
+
+#[test]
+fn ar02_release_before_expiry_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    env(4, 0, submitted + REVIEW_WINDOW - 1);
+    assert_eq!(c.release_after_review(id).unwrap_err().code(), "E-11");
+}
+
+#[test]
+fn ar03_release_while_disputed_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(4, 0, now + 5 * DAY_NS);
+    assert_eq!(c.release_after_review(id).unwrap_err().code(), "E-02");
+}
+
+#[test]
+fn ar05_release_at_exact_boundary_is_allowed() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    env(4, 0, submitted + REVIEW_WINDOW);
+    c.release_after_review(id).unwrap();
+    assert_eq!(status(&c, id), ProjectStatus::Released);
+}
+
+// ===========================================================================
+// RF — refunds (FSD F-10, STS 5.2B / 5.4)
+// ===========================================================================
+
+#[test]
+fn rf01_no_response_refund() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env(1, 0, now + ACCEPT_WINDOW + 1);
+    c.claim_no_response_refund(id).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Refunded);
+    assert_eq!(claimable(&c, accounts(1)), AMOUNT);
+}
+
+#[test]
+fn rf02_deadline_refund_when_nothing_was_submitted() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = accepted_project(&mut c, now);
+
+    env(1, 0, now + 8 * DAY_NS);
+    c.claim_deadline_refund(id).unwrap();
+
+    assert_eq!(status(&c, id), ProjectStatus::Refunded);
+    assert_eq!(claimable(&c, accounts(1)), AMOUNT);
+}
+
+#[test]
+fn rf03_no_response_refund_before_window_expires() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env(1, 0, now + HOUR_NS);
+    assert_eq!(c.claim_no_response_refund(id).unwrap_err().code(), "E-03");
+}
+
+#[test]
+fn rf04_deadline_refund_while_work_is_still_due() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = accepted_project(&mut c, now);
+
+    env(1, 0, now + HOUR_NS);
+    assert_eq!(c.claim_deadline_refund(id).unwrap_err().code(), "E-03");
+}
+
+#[test]
+fn rf05_refund_is_closed_once_a_deliverable_exists() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(1, 0, now + 8 * DAY_NS);
+    assert_eq!(c.claim_deadline_refund(id).unwrap_err().code(), "E-02");
+}
+
+#[test]
+fn rf06_non_client_cannot_claim_a_refund() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env(2, 0, now + ACCEPT_WINDOW + 1);
+    assert_eq!(c.claim_no_response_refund(id).unwrap_err().code(), "E-01");
+}
+
+#[test]
+fn rf07_missed_revision_deadline_is_not_a_refund() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let at = now + 2 * DAY_NS + HOUR_NS;
+
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+
+    env(1, 0, at + 4 * DAY_NS);
+    assert_eq!(c.claim_deadline_refund(id).unwrap_err().code(), "E-02");
+}
+
+#[test]
+fn rf08_double_refund_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env(1, 0, now + ACCEPT_WINDOW + 1);
+    c.claim_no_response_refund(id).unwrap();
+    let err = c.claim_no_response_refund(id).unwrap_err();
+    assert_eq!(err.code(), "E-08");
+    assert_eq!(claimable(&c, accounts(1)), AMOUNT, "refunded once, not twice");
+}
