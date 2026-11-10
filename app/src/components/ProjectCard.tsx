@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ProjectClaim } from '../types/contract';
 import { getProject } from '../lib/near/contract';
@@ -14,7 +15,7 @@ export function ProjectCard({ claim }: { claim: ProjectClaim }) {
     claim.role === 'client' ? project.data?.freelancer : project.data?.client;
 
   return (
-    <article className="card">
+    <Link className="card card-link" to={`/p/${claim.project_id}`}>
       <div className="card-top">
         <span className="card-id">#{claim.project_id}</span>
         <StatusBadge status={claim.status} />
@@ -30,6 +31,6 @@ export function ProjectCard({ claim }: { claim: ProjectClaim }) {
           {claim.role === 'client' ? 'client' : 'freelancer'}
         </span>
       </div>
-    </article>
+    </Link>
   );
 }
