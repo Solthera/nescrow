@@ -1621,3 +1621,306 @@ fn views_report_project_lists_per_role() {
     // an account with no projects gets an empty list, not a panic
     assert_eq!(c.get_projects(accounts(4), Role::Client, 0, 10).len(), 0);
 }
+
+// ===========================================================================
+// Remaining L1 cases from the Test Plan
+// ===========================================================================
+
+#[test]
+fn cp11_excess_deposit_becomes_the_escrow() {
+    // D-06: there is no separate amount field, so a larger deposit simply funds a
+    // larger escrow. No refund of the difference, no mismatch to reconcile.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let bigger = 2 * AMOUNT;
+    env(1, bigger, now);
+    let id = c
+        .create_project(
+            accounts(2),
+            accounts(3),
+            "Logo".into(),
+            "Brief".into(),
+            (now + 7 * DAY_NS).into(),
+        )
+        .unwrap();
+    env_view(now);
+    assert_eq!(c.get_project(id).unwrap().amount.0, bigger);
+}
+
+#[test]
+fn sd08_double_submission_in_accepted_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(2, 0, now + 2 * DAY_NS + HOUR_NS);
+    assert_eq!(
+        c.submit_deliverable(id, "https://example.com/again".into(), "".into())
+            .unwrap_err()
+            .code(),
+        "E-02"
+    );
+}
+
+#[test]
+fn sd09_resubmission_resets_the_review_deadline() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let first_review = {
+        env_view(now);
+        c.get_project(id).unwrap().review_deadline.0
+    };
+
+    let at = now + 2 * DAY_NS + HOUR_NS;
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+    let resubmit = at + HOUR_NS;
+    env(2, 0, resubmit);
+    c.submit_deliverable(id, "https://example.com/v2".into(), "".into())
+        .unwrap();
+
+    env_view(resubmit);
+    let second_review = c.get_project(id).unwrap().review_deadline.0;
+    assert_ne!(first_review, second_review);
+    assert_eq!(second_review, resubmit + REVIEW_WINDOW);
+}
+
+#[test]
+fn rv06_extension_is_relative_to_now_not_the_old_deadline() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    // Ask on the last second of the review window.
+    let at = submitted + REVIEW_WINDOW - 1;
+    env(1, 0, at);
+    c.request_revision(id).unwrap();
+
+    env_view(at);
+    assert_eq!(
+        c.get_project(id).unwrap().work_deadline.0,
+        at + 3 * DAY_NS,
+        "a full three days from the request, not from the old deadline"
+    );
+}
+
+#[test]
+fn rv07_full_two_revision_cycle() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let mut at = now + 2 * DAY_NS + HOUR_NS;
+
+    for round in 1..=2u8 {
+        env(1, 0, at);
+        c.request_revision(id).unwrap();
+        env(2, 0, at + HOUR_NS);
+        c.submit_deliverable(id, format!("https://example.com/r{}", round), "".into())
+            .unwrap();
+        at += 2 * HOUR_NS;
+        env_view(at);
+        assert_eq!(c.get_project(id).unwrap().revision_count, round);
+        assert_eq!(status(&c, id), ProjectStatus::Delivered);
+    }
+}
+
+#[test]
+fn ap06_balance_buckets_after_approval() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    released_project(&mut c, now);
+
+    env_view(now);
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.locked.0, 0, "nothing left escrowed");
+    assert_eq!(inv.claimable.0, AMOUNT, "all of it allocated");
+    assert!(inv.ok);
+}
+
+#[test]
+fn ar04_client_may_trigger_automatic_release() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+    let submitted = now + 2 * DAY_NS;
+
+    env(1, 0, submitted + REVIEW_WINDOW + 1);
+    c.release_after_review(id).unwrap();
+    assert_eq!(status(&c, id), ProjectStatus::Released);
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "funds still go to the freelancer");
+}
+
+#[test]
+fn ds08_evidence_stays_on_its_own_project() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let a = disputed_project(&mut c, now);
+    let b = disputed_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.submit_evidence(a, "https://example.com/a".into(), "".into())
+        .unwrap();
+
+    env_view(now);
+    assert!(c.get_project(a).unwrap().client_evidence.is_some());
+    assert!(c.get_project(b).unwrap().client_evidence.is_none());
+}
+
+#[test]
+fn ds09_dispute_on_a_terminal_project_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert_eq!(c.open_dispute(id).unwrap_err().code(), "E-08");
+}
+
+#[test]
+fn ab09_resolve_in_wrong_state() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + HOUR_NS);
+    assert_eq!(c.arbiter_resolve(id, 50).unwrap_err().code(), "E-02");
+}
+
+#[test]
+fn ms05_proposal_outside_a_dispute_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = delivered_project(&mut c, now);
+
+    env(1, 0, now + 2 * DAY_NS + HOUR_NS);
+    assert_eq!(c.propose_settlement(id, 50).unwrap_err().code(), "E-02");
+}
+
+#[test]
+fn ms06_settlement_after_an_arbiter_decision_is_rejected() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.arbiter_resolve(id, 60).unwrap();
+
+    env(1, 0, now + 2 * DAY_NS + 3 * HOUR_NS);
+    assert_eq!(c.settle_mutual(id, 60).unwrap_err().code(), "E-08");
+}
+
+#[test]
+fn inv06_exactly_one_status_at_a_time() {
+    // The status is a single enum value, so "two statuses at once" is not
+    // representable. This walks a full lifecycle and asserts the terminal value.
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+    let s = status(&c, id);
+    assert!(s.is_terminal());
+    assert_eq!(s, ProjectStatus::Released);
+}
+
+#[test]
+fn wd04_both_parties_withdraw_after_resolution() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(3, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    c.arbiter_resolve(id, 70).unwrap();
+
+    let seven = AMOUNT * 70 / 100;
+    let three = AMOUNT - seven;
+
+    env(1, 0, now + 2 * DAY_NS + 3 * HOUR_NS);
+    assert!(c.withdraw().is_ok());
+    assert_eq!(claimable(&c, accounts(1)), 0);
+
+    env(2, 0, now + 2 * DAY_NS + 4 * HOUR_NS);
+    assert!(c.withdraw().is_ok());
+    assert_eq!(claimable(&c, accounts(2)), 0);
+
+    env_view(now);
+    let inv = c.get_fund_invariants();
+    assert_eq!(inv.claimable.0, 0, "everything allocated has been claimed");
+    assert!(inv.ok);
+    let _ = (seven, three);
+}
+
+#[test]
+fn wd08_withdrawal_after_refund() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env(1, 0, now + ACCEPT_WINDOW + 1);
+    c.claim_no_response_refund(id).unwrap();
+    assert_eq!(claimable(&c, accounts(1)), AMOUNT);
+
+    env(1, 0, now + ACCEPT_WINDOW + HOUR_NS);
+    assert!(c.withdraw().is_ok());
+    assert_eq!(claimable(&c, accounts(1)), 0);
+}
+
+#[test]
+fn sc02_intruder_cannot_drive_freelancer_actions() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = create_default(&mut c, now);
+
+    env(4, 0, now + HOUR_NS);
+    assert_eq!(c.accept_project(id).unwrap_err().code(), "E-01");
+    env(4, 0, now + HOUR_NS);
+    assert_eq!(c.reject_project(id).unwrap_err().code(), "E-01");
+    env(4, 0, now + HOUR_NS);
+    assert_eq!(
+        c.submit_deliverable(id, "https://x.example".into(), "".into())
+            .unwrap_err()
+            .code(),
+        "E-01"
+    );
+}
+
+#[test]
+fn sc03_intruder_cannot_act_as_arbiter() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = disputed_project(&mut c, now);
+
+    env(4, 0, now + 2 * DAY_NS + 2 * HOUR_NS);
+    assert_eq!(c.arbiter_resolve(id, 50).unwrap_err().code(), "E-01");
+}
+
+#[test]
+fn sc06_a_settled_project_cannot_be_settled_again() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    let id = released_project(&mut c, now);
+    let at = now + 2 * DAY_NS + 2 * HOUR_NS;
+
+    env(1, 0, at);
+    assert_eq!(c.approve_deliverable(id).unwrap_err().code(), "E-08");
+    env(4, 0, at);
+    assert_eq!(c.release_after_review(id).unwrap_err().code(), "E-08");
+    assert_eq!(claimable(&c, accounts(2)), AMOUNT, "paid exactly once");
+}
+
+#[test]
+fn ad08_fund_invariants_match_manual_arithmetic() {
+    let mut c = new_contract();
+    let now = 1_000 * HOUR_NS;
+    create_default(&mut c, now);
+    released_project(&mut c, now);
+
+    env_view(now);
+    let inv = c.get_fund_invariants();
+    // One project still escrowed + one settled and awaiting withdrawal.
+    assert_eq!(inv.locked.0, AMOUNT);
+    assert_eq!(inv.claimable.0, AMOUNT);
+    assert_eq!(inv.locked.0 + inv.claimable.0, 2 * AMOUNT);
+    assert_eq!(inv.spendable.0, inv.balance.0 - inv.storage_stake.0);
+    assert!(inv.ok);
+}
