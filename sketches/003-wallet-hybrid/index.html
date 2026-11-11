@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nescrow — wallet hybrid</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #07080a;
+    --card: #0f1115;
+    --card-2: #14171c;
+    --hair: #22262d;
+    --fg: #f2f4f7;
+    --muted: #8d95a2;
+    --dim: #59616d;
+    --accent: #b6f36a;
+    --accent-ink: #0b0f06;
+    --accent-10: rgba(182,243,106,.10);
+    --accent-22: rgba(182,243,106,.22);
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--fg); line-height: 1.45; -webkit-font-smoothing: antialiased;
+         min-height: 100vh; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto 0; height: 420px; pointer-events: none;
+         background: radial-gradient(760px 300px at 22% -10%, rgba(182,243,106,.10), transparent 72%); }
+  .wrap { position: relative; max-width: 1120px; margin: 0 auto; padding: 20px 24px 128px; }
+
+  /* top */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-bottom: 20px; }
+  .top-left { display: flex; align-items: center; gap: 14px; }
+  .back { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .back:hover { color: var(--fg); }
+  .cid { font: 12px var(--mono); color: var(--dim); }
+  .chip { font: 600 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+          color: var(--accent); background: var(--accent-10); border: 1px solid var(--accent-22);
+          padding: 7px 10px; border-radius: 8px; }
+
+  /* layout */
+  .grid { display: grid; grid-template-columns: 1.18fr .82fr; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; }
+
+  .card { background: var(--card); border: 1px solid var(--hair); border-radius: 18px; padding: 20px 22px; }
+  .card.tight { padding: 18px 22px; }
+
+  .label { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .amount { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 52px; line-height: 1.05;
+            letter-spacing: -.025em; margin-top: 10px; display: flex; align-items: baseline; gap: 10px; }
+  .amount small { font-size: 16px; letter-spacing: .04em; color: var(--muted); font-weight: 400; }
+  .title { font-size: 18px; font-weight: 600; margin-top: 14px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 3px; }
+  .sub code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  /* meter */
+  .meter { margin-top: 22px; }
+  .meter-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--muted); }
+  .meter-top b { color: var(--fg); font: 500 13px var(--mono); font-variant-numeric: tabular-nums; }
+  .track { height: 5px; background: var(--card-2); border-radius: 99px; margin-top: 9px; overflow: hidden; }
+  .fill { height: 100%; width: 62%; background: var(--accent); border-radius: 99px; }
+
+  /* split */
+  .split { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--hair); }
+  .split-bar { display: flex; height: 7px; border-radius: 99px; overflow: hidden; background: var(--card-2); }
+  .split-bar .a { background: var(--accent); }
+  .split-bar .b { background: #2a3038; }
+  .split-legend { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--muted); margin-top: 9px; }
+  .split-legend b { color: var(--fg); font: 500 12px var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* rail */
+  h2.h { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+  .rail { display: flex; align-items: flex-start; justify-content: space-between; margin-top: 20px; position: relative; }
+  .rail::before { content: ""; position: absolute; left: 6px; right: 6px; top: 5px; height: 1px; background: var(--hair); }
+  .node { position: relative; flex: 1; padding-right: 8px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--card-2); border: 1px solid var(--hair);
+         margin-bottom: 10px; position: relative; z-index: 1; }
+  .node.done .dot { background: var(--accent); border-color: var(--accent); }
+  .node.now .dot { background: var(--bg); border: 2px solid var(--accent); box-shadow: 0 0 0 4px var(--accent-10); }
+  .node b { display: block; font-size: 12px; font-weight: 500; color: var(--dim); }
+  .node.now b, .node.done b { color: var(--fg); }
+  .node span { display: block; font: 11px var(--mono); color: var(--dim); margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  /* rows */
+  .rows { margin-top: 10px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--hair); }
+  .row:last-child { border-bottom: none; padding-bottom: 0; }
+  .avatar { width: 34px; height: 34px; border-radius: 11px; background: var(--card-2); border: 1px solid var(--hair);
+            display: grid; place-items: center; font: 500 11px var(--mono); color: var(--muted); flex: none; }
+  .row-main { flex: 1; min-width: 0; }
+  .row-main b { display: block; font-size: 13.5px; font-weight: 500; }
+  .row-main span { display: block; font: 11.5px var(--mono); color: var(--muted);
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-val { font: 13px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .row-val.good { color: var(--accent); }
+
+  /* dock */
+  .dock { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px 24px 18px;
+          background: linear-gradient(transparent, rgba(7,8,10,.92) 30%, rgba(7,8,10,.98)); }
+  .dock-inner { max-width: 1120px; margin: 0 auto; display: flex; gap: 10px; align-items: stretch; }
+  .dock-hint { flex: 1; align-self: center; font-size: 12px; color: var(--dim); }
+  .btn { border-radius: 12px; padding: 13px 18px; font: 500 14px/1 inherit; cursor: pointer;
+         border: 1px solid var(--hair); background: var(--card-2); color: var(--fg); }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.06); }
+  .btn.ghost { background: transparent; color: var(--muted); }
+  .btn:active { transform: translateY(1px); }
+
+  /* confirm sheet */
+  .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.62); display: none; align-items: center; justify-content: center; padding: 20px; }
+  .backdrop.open { display: flex; }
+  .modal { width: 100%; max-width: 420px; background: var(--card); border: 1px solid var(--hair); border-radius: 18px; padding: 22px; }
+  .modal h3 { font-size: 16px; margin-bottom: 6px; }
+  .modal p { color: var(--muted); font-size: 13px; }
+  .modal .big { font: 600 26px var(--mono); font-variant-numeric: tabular-nums; margin: 14px 0 4px; }
+  .modal .note { font-size: 12px; color: var(--dim); margin-top: 10px; }
+  .modal-actions { display: flex; gap: 8px; margin-top: 18px; }
+  .modal-actions .btn { flex: 1; }
+
+  @media (max-width: 900px) {
+    .dock-hint { display: none; }
+    .amount { font-size: 40px; }
+    .wrap { padding: 16px 16px 120px; }
+    .dock { padding: 12px 16px 16px; }
+    .dock-inner .btn.primary { flex: 2; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="top-left">
+      <a class="back" href="#">← projects</a>
+      <span class="cid">nescrow-escrow.testnet</span>
+    </div>
+    <span class="chip">Delivered</span>
+  </div>
+
+  <div class="grid">
+    <div class="col">
+      <div class="card">
+        <div class="label">escrowed</div>
+        <div class="amount">1.0000<small>NEAR</small></div>
+        <div class="title">first test</div>
+        <div class="sub">client <code>dulllink3974.testnet</code> · freelancer <code>nescrow-freelancer.testnet</code></div>
+
+        <div class="meter">
+          <div class="meter-top"><span>Review window closes in</span><b>2d 14h 08m</b></div>
+          <div class="track"><div class="fill"></div></div>
+        </div>
+
+        <div class="split">
+          <div class="split-bar"><div class="a" style="width:100%"></div><div class="b" style="width:0%"></div></div>
+          <div class="split-legend">
+            <span>if you approve — freelancer <b>1.0000</b></span>
+            <span>client <b>0.0000</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="h">progress</h2>
+        <div class="rail">
+          <div class="node done"><div class="dot"></div><b>Funded</b><span>10 Nov 21:13</span></div>
+          <div class="node done"><div class="dot"></div><b>Accepted</b><span>10 Nov 21:20</span></div>
+          <div class="node now"><div class="dot"></div><b>Delivered</b><span>11 Nov 09:04</span></div>
+          <div class="node"><div class="dot"></div><b>Review</b><span>72h window</span></div>
+          <div class="node"><div class="dot"></div><b>Settled</b><span>then withdraw</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card tight">
+        <h2 class="h">parties</h2>
+        <div class="rows">
+          <div class="row"><div class="avatar">DU</div>
+            <div class="row-main"><b>You</b><span>dulllink3974.testnet</span></div>
+            <div class="row-val">client</div></div>
+          <div class="row"><div class="avatar">NF</div>
+            <div class="row-main"><b>Freelancer</b><span>nescrow-freelancer.testnet</span></div>
+            <div class="row-val good">1.0000</div></div>
+          <div class="row"><div class="avatar">NA</div>
+            <div class="row-main"><b>Arbiter</b><span>nescrow-arbiter.testnet</span></div>
+            <div class="row-val">idle</div></div>
+        </div>
+      </div>
+
+      <div class="card tight">
+        <h2 class="h">terms</h2>
+        <div class="rows">
+          <div class="row"><div class="avatar">REV</div>
+            <div class="row-main"><b>Revisions</b><span>2 allowed by the contract</span></div>
+            <div class="row-val">0 / 2</div></div>
+          <div class="row"><div class="avatar">DUE</div>
+            <div class="row-main"><b>Work deadline</b><span>17 Nov 2026 23:59</span></div>
+            <div class="row-val">7d</div></div>
+          <div class="row"><div class="avatar">WD</div>
+            <div class="row-main"><b>Withdrawable</b><span>after settlement</span></div>
+            <div class="row-val">0.0000</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="dock">
+  <div class="dock-inner">
+    <span class="dock-hint">Approval is final. The contract pays from escrow, never from the operator.</span>
+    <button class="btn ghost">Revise</button>
+    <button class="btn">Dispute</button>
+    <button class="btn primary" onclick="document.getElementById('confirm').classList.add('open')">Approve · 1 NEAR</button>
+  </div>
+</div>
+
+<div class="backdrop" id="confirm" onclick="if(event.target===this) this.classList.remove('open')">
+  <div class="modal">
+    <h3>Release the escrow?</h3>
+    <p>This moves the full escrow to nescrow-freelancer.testnet. It cannot be undone — the contract has no admin key.</p>
+    <div class="big">1.0000 NEAR</div>
+    <p class="note">gas ≈ 0.0003 NEAR · one transaction · funds become withdrawable by the freelancer</p>
+    <div class="modal-actions">
+      <button class="btn" onclick="document.getElementById('confirm').classList.remove('open')">Cancel</button>
+      <button class="btn primary" onclick="document.getElementById('confirm').classList.remove('open')">Sign and release</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nescrow — wallet light</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --hair: #e6e8ec;
+    --fg: #14161a;
+    --muted: #6b7280;
+    --dim: #9aa1ac;
+    --accent: #2f6bff;
+    --accent-soft: #eaf0ff;
+    --good: #0f9d58;
+    --warn: #b26a00;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--fg); line-height: 1.45; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 22px 20px 120px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 18px; }
+  .back { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .status { font: 600 11px/1 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+            color: var(--accent); background: var(--accent-soft); padding: 7px 10px; border-radius: 8px; }
+
+  .grid { display: grid; grid-template-columns: 1.25fr .9fr; gap: 16px; align-items: start; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } .wrap { padding-bottom: 96px; } }
+
+  .card { background: var(--card); border: 1px solid var(--hair); border-radius: 18px; padding: 20px; }
+  .card + .card { margin-top: 16px; }
+
+  .label { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+  .amount { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 42px; letter-spacing: -.02em; margin-top: 8px; }
+  .amount small { font-size: 15px; color: var(--muted); margin-left: 6px; }
+  .title { font-size: 16px; font-weight: 600; margin-top: 10px; }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  .split { margin-top: 18px; }
+  .split-bar { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: var(--hair); }
+  .split-bar .a { background: var(--accent); }
+  .split-bar .b { background: #c9d4ea; }
+  .split-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .split-legend b { color: var(--fg); font-family: var(--mono); font-weight: 500; }
+
+  .meter { margin-top: 18px; }
+  .meter-top { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .meter-top b { color: var(--fg); font-family: var(--mono); font-weight: 500; }
+  .track { height: 6px; background: var(--hair); border-radius: 99px; margin-top: 8px; }
+  .fill { height: 100%; width: 62%; background: var(--accent); border-radius: 99px; }
+
+  h2.h { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
+         font-weight: 600; margin-bottom: 6px; }
+  .rows { display: flex; flex-direction: column; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--hair); }
+  .row:last-child { border-bottom: none; padding-bottom: 0; }
+  .avatar { width: 34px; height: 34px; border-radius: 11px; background: var(--bg); display: grid; place-items: center;
+            font: 600 12px var(--mono); color: var(--muted); flex: none; border: 1px solid var(--hair); }
+  .row-main { flex: 1; min-width: 0; }
+  .row-main b { display: block; font-size: 14px; font-weight: 550; }
+  .row-main span { display: block; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-val { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .row-val.good { color: var(--good); }
+  .row-val.warn { color: var(--warn); }
+
+  .steps { display: flex; flex-direction: column; gap: 0; }
+  .step { display: flex; gap: 12px; padding: 10px 0; position: relative; }
+  .step .mark { width: 18px; display: grid; place-items: start center; }
+  .step .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--hair); margin-top: 5px; }
+  .step.done .dot { background: var(--accent); }
+  .step.now .dot { background: #fff; border: 2px solid var(--accent); }
+  .step .body b { display: block; font-size: 13px; font-weight: 550; }
+  .step .body span { font-size: 12px; color: var(--muted); }
+  .step-line { position: absolute; left: 8px; top: 22px; bottom: -4px; width: 1px; background: var(--hair); }
+  .step:last-child .step-line { display: none; }
+
+  .dock { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(244,245,247,.86);
+          backdrop-filter: blur(10px); border-top: 1px solid var(--hair); padding: 12px 20px 16px; }
+  .dock-inner { max-width: 980px; margin: 0 auto; display: flex; gap: 8px; }
+  .btn { border-radius: 12px; padding: 13px 16px; font: 550 14px/1 inherit; cursor: pointer;
+         border: 1px solid var(--hair); background: #fff; color: var(--fg); }
+  .btn.primary { background: var(--fg); color: #fff; border-color: var(--fg); flex: 1.5; }
+  .btn.ghost { color: var(--muted); }
+  .btn:active { transform: translateY(1px); }
+  @media (max-width: 800px) { .dock .btn.ghost, .dock .btn.mid { display: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <a class="back" href="#">← projects</a>
+    <span class="status">Delivered</span>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <div class="label">escrowed</div>
+        <div class="amount">1.0000<small>NEAR</small></div>
+        <div class="title">first test</div>
+        <div class="sub">dulllink3974.testnet named nescrow-freelancer.testnet · arbiter nescrow-arbiter.testnet</div>
+
+        <div class="meter">
+          <div class="meter-top"><span>Review window closes</span><b>2d 14h</b></div>
+          <div class="track"><div class="fill"></div></div>
+        </div>
+
+        <div class="split">
+          <div class="split-bar"><div class="a" style="width:100%"></div><div class="b" style="width:0%"></div></div>
+          <div class="split-legend">
+            <span>on approval — freelancer <b>1.0000</b></span>
+            <span>client <b>0.0000</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="h">progress</h2>
+        <div class="steps">
+          <div class="step done"><div class="mark"><div class="dot"></div><div class="step-line"></div></div>
+            <div class="body"><b>Funded</b><span>1 NEAR deposited by the client</span></div></div>
+          <div class="step done"><div class="mark"><div class="dot"></div><div class="step-line"></div></div>
+            <div class="body"><b>Accepted</b><span>freelancer agreed to the brief</span></div></div>
+          <div class="step now"><div class="mark"><div class="dot"></div><div class="step-line"></div></div>
+            <div class="body"><b>Delivered</b><span>example.com/v1 · “first pass” · 6 hours ago</span></div></div>
+          <div class="step"><div class="mark"><div class="dot"></div><div class="step-line"></div></div>
+            <div class="body"><b>Review</b><span>you approve, revise, or dispute</span></div></div>
+          <div class="step"><div class="mark"><div class="dot"></div></div>
+            <div class="body"><b>Settled</b><span>allocation recorded, then withdrawable</span></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2 class="h">parties</h2>
+        <div class="rows">
+          <div class="row"><div class="avatar">DU</div>
+            <div class="row-main"><b>You</b><span>dulllink3974.testnet</span></div>
+            <div class="row-val">client</div></div>
+          <div class="row"><div class="avatar">NF</div>
+            <div class="row-main"><b>Freelancer</b><span>nescrow-freelancer.testnet</span></div>
+            <div class="row-val good">1.0000</div></div>
+          <div class="row"><div class="avatar">NA</div>
+            <div class="row-main"><b>Arbiter</b><span>nescrow-arbiter.testnet</span></div>
+            <div class="row-val">idle</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="h">terms</h2>
+        <div class="rows">
+          <div class="row"><div class="avatar">0</div>
+            <div class="row-main"><b>Revisions</b><span>2 allowed</span></div>
+            <div class="row-val">0 / 2</div></div>
+          <div class="row"><div class="avatar">⏱</div>
+            <div class="row-main"><b>Work deadline</b><span>17 Nov 2026, 23:59</span></div>
+            <div class="row-val warn">7d</div></div>
+          <div class="row"><div class="avatar">◎</div>
+            <div class="row-main"><b>Withdrawable</b><span>yours, after settlement</span></div>
+            <div class="row-val">0.0000</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="dock">
+  <div class="dock-inner">
+    <button class="btn ghost">Revise</button>
+    <button class="btn mid">Dispute</button>
+    <button class="btn primary">Approve and release 1 NEAR</button>
+  </div>
+</div>
+</body>
+</html>

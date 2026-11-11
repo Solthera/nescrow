@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nescrow — wallet dark</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #07080a;
+    --surface: #101216;
+    --surface-2: #16191f;
+    --hair: #23262d;
+    --fg: #f2f4f7;
+    --muted: #8e96a3;
+    --dim: #5c6470;
+    --accent: #b6f36a;
+    --accent-ink: #0b0f06;
+    --danger: #ff8a7a;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg); line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh; display: flex; justify-content: center;
+  }
+  .phone {
+    width: 100%; max-width: 430px; min-height: 100vh;
+    background:
+      radial-gradient(680px 320px at 50% -8%, rgba(182,243,106,.10), transparent 70%),
+      var(--bg);
+    padding: 14px 18px 108px; position: relative;
+  }
+  /* top bar */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 2px 22px; }
+  .back { color: var(--muted); text-decoration: none; font-size: 13px; }
+  .chip { font: 500 11px/1 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+          color: var(--accent); background: rgba(182,243,106,.10); border: 1px solid rgba(182,243,106,.22);
+          padding: 6px 9px; border-radius: 7px; }
+  /* balance */
+  .label { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .amount { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 44px;
+            letter-spacing: -.02em; margin-top: 6px; display: flex; align-items: baseline; gap: 8px; }
+  .amount small { font-size: 15px; color: var(--muted); letter-spacing: .02em; }
+  .title { margin-top: 12px; font-size: 17px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  /* window meter */
+  .meter { margin-top: 20px; }
+  .meter-top { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); }
+  .meter-top b { color: var(--fg); font-weight: 500; font-family: var(--mono); }
+  .track { height: 4px; background: var(--surface-2); border-radius: 99px; margin-top: 8px; overflow: hidden; }
+  .fill { height: 100%; width: 62%; background: var(--accent); border-radius: 99px; }
+  /* timeline */
+  .section { margin-top: 26px; }
+  .section h2 { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); font-weight: 500; }
+  .rail { display: flex; align-items: flex-start; justify-content: space-between; margin-top: 14px; position: relative; }
+  .rail::before { content:""; position:absolute; left: 8px; right: 8px; top: 5px; height: 1px; background: var(--hair); }
+  .node { position: relative; text-align: center; flex: 1; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--surface-2);
+         border: 1px solid var(--hair); margin: 0 auto 7px; position: relative; z-index: 1; }
+  .node.done .dot { background: var(--accent); border-color: var(--accent); }
+  .node.now .dot { background: var(--bg); border: 2px solid var(--accent); box-shadow: 0 0 0 4px rgba(182,243,106,.12); }
+  .node span { font-size: 10px; color: var(--dim); letter-spacing: .02em; }
+  .node.done span, .node.now span { color: var(--fg); }
+  /* rows */
+  .rows { margin-top: 8px; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--hair); }
+  .row:last-child { border-bottom: none; }
+  .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--surface-2);
+            display: grid; place-items: center; font: 500 12px var(--mono); color: var(--muted); flex: none; }
+  .row-main { flex: 1; min-width: 0; }
+  .row-main b { display: block; font-size: 14px; font-weight: 500; }
+  .row-main span { display: block; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-val { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .row-val.good { color: var(--accent); }
+  /* action dock */
+  .dock { position: fixed; left: 0; right: 0; bottom: 0; display: flex; justify-content: center;
+          padding: 12px 18px 18px; background: linear-gradient(transparent, var(--bg) 34%); }
+  .dock-inner { width: 100%; max-width: 430px; display: flex; gap: 8px; }
+  .btn { flex: 1; border-radius: 13px; padding: 14px 12px; font: 500 14px/1 inherit; cursor: pointer;
+         border: 1px solid var(--hair); background: var(--surface); color: var(--fg); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; flex: 1.4; }
+  .btn.ghost { background: transparent; color: var(--muted); flex: .8; }
+  .btn:active { transform: translateY(1px); }
+  /* sheet */
+  .sheet-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: flex-end; justify-content: center; }
+  .sheet-backdrop.open { display: flex; }
+  .sheet { width: 100%; max-width: 430px; background: var(--surface); border-radius: 20px 20px 0 0;
+           padding: 20px 18px 26px; border-top: 1px solid var(--hair); }
+  .sheet h3 { font-size: 15px; margin-bottom: 4px; }
+  .sheet p { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .sheet input, .sheet textarea { width: 100%; background: var(--surface-2); border: 1px solid var(--hair);
+      border-radius: 11px; padding: 11px 12px; color: var(--fg); font: inherit; font-size: 14px; margin-bottom: 10px; }
+  .sheet .btn { width: 100%; }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="top">
+    <a class="back" href="#">← projects</a>
+    <span class="chip">Delivered</span>
+  </div>
+
+  <div class="label">escrowed</div>
+  <div class="amount">1.0000 <small>NEAR</small></div>
+  <div class="title">first test</div>
+  <div class="sub">reviewing · deliverable submitted 6 hours ago</div>
+
+  <div class="meter">
+    <div class="meter-top"><span>Review window</span><b>2d 14h left</b></div>
+    <div class="track"><div class="fill"></div></div>
+  </div>
+
+  <div class="section">
+    <h2>progress</h2>
+    <div class="rail">
+      <div class="node done"><div class="dot"></div><span>Funded</span></div>
+      <div class="node done"><div class="dot"></div><span>Accepted</span></div>
+      <div class="node now"><div class="dot"></div><span>Delivered</span></div>
+      <div class="node"><div class="dot"></div><span>Review</span></div>
+      <div class="node"><div class="dot"></div><span>Settled</span></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>parties</h2>
+    <div class="rows">
+      <div class="row">
+        <div class="avatar">DU</div>
+        <div class="row-main"><b>You</b><span>dulllink3974.testnet</span></div>
+        <div class="row-val">client</div>
+      </div>
+      <div class="row">
+        <div class="avatar">NF</div>
+        <div class="row-main"><b>Freelancer</b><span>nescrow-freelancer.testnet</span></div>
+        <div class="row-val">1.0000</div>
+      </div>
+      <div class="row">
+        <div class="avatar">NA</div>
+        <div class="row-main"><b>Arbiter</b><span>nescrow-arbiter.testnet</span></div>
+        <div class="row-val">idle</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>work</h2>
+    <div class="rows">
+      <div class="row">
+        <div class="avatar">↗</div>
+        <div class="row-main"><b>Deliverable</b><span>example.com/v1 · “first pass”</span></div>
+        <div class="row-val good">open</div>
+      </div>
+      <div class="row">
+        <div class="avatar">0</div>
+        <div class="row-main"><b>Revisions</b><span>none requested</span></div>
+        <div class="row-val">0 / 2</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="dock">
+    <div class="dock-inner">
+      <button class="btn ghost" onclick="document.getElementById('sheet').classList.add('open')">Revise</button>
+      <button class="btn">Dispute</button>
+      <button class="btn primary">Approve · release 1 NEAR</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-backdrop" id="sheet" onclick="if(event.target===this) this.classList.remove('open')">
+  <div class="sheet">
+    <h3>Request a revision</h3>
+    <p>Adds three days to the deadline and keeps the escrow locked. Two revisions max.</p>
+    <textarea rows="2" placeholder="What needs to change?"></textarea>
+    <button class="btn primary" onclick="document.getElementById('sheet').classList.remove('open')">Send to freelancer</button>
+  </div>
+</div>
+</body>
+</html>
