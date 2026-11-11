@@ -15,7 +15,9 @@ export default function App() {
           <Route path="/new" element={<CreateProject />} />
         </Routes>
         <footer className="footer">
-          <span>nescrow · NEAR testnet · no admin key can move escrow</span>
+          <div className="footer-inner">
+            nescrow · NEAR testnet · the contract holds the escrow, no admin key can move it
+          </div>
         </footer>
       </div>
     </BrowserRouter>

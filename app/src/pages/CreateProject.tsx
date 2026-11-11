@@ -101,11 +101,11 @@ export function CreateProject() {
 
   if (!accountId) {
     return (
-      <main className="page">
+      <main className="wrap">
         <section className="empty">
           <h2>Connect a wallet to fund an escrow</h2>
           <p>The escrow is deposited in the same transaction that creates the project.</p>
-          <button className="btn" onClick={connect}>
+          <button className="btn primary" onClick={connect}>
             Connect wallet
           </button>
         </section>
@@ -121,17 +121,12 @@ export function CreateProject() {
       : null;
 
   return (
-    <main className="page">
+    <main className="wrap">
       <Link className="back" to="/">
         ← all projects
       </Link>
-      <header className="detail-head">
-        <div>
-          <span className="card-id">new escrow</span>
-          <h1>Fund a project</h1>
-        </div>
-      </header>
-      <p className="detail-desc">
+      <h1 className="page-title" style={{ marginTop: 4 }}>Fund a project</h1>
+      <p className="sub">
         You are the client. The money leaves your wallet now and is held by the contract —
         not by us, not by the freelancer — until the work is approved or a decision is made.
       </p>
@@ -226,7 +221,7 @@ export function CreateProject() {
         )}
 
         <div className="form-foot field-wide">
-          <button className="btn" type="submit" disabled={mutation.isPending}>
+          <button className="btn primary" type="submit" disabled={mutation.isPending}>
             {mutation.isPending ? 'Waiting for the wallet…' : 'Fund escrow'}
           </button>
           <span className="muted small">

@@ -3,21 +3,21 @@ import { useQuery } from '@tanstack/react-query';
 import { useWallet } from '../hooks/useWallet';
 import { getClaimable, getConfig, getProject } from '../lib/near/contract';
 import { availableActions } from '../lib/eligibility';
-import { formatNear, nowNanos } from '../lib/format';
+import { formatNear, formatNearFixed, nowNanos } from '../lib/format';
 import { mapError } from '../lib/errors';
+import { formatStamp } from '../lib/time';
 import { ENV } from '../config/env';
-import { StatusBadge } from '../components/StatusBadge';
-import { ActionBar } from '../components/ActionBar';
+import { StatusChip } from '../components/StatusChip';
+import { Rail } from '../components/Rail';
+import { WindowMeter } from '../components/WindowMeter';
+import { SplitBar } from '../components/SplitBar';
+import { ActionDock } from '../components/ActionDock';
 
 const REFETCH_MS = 15_000;
 
-function when(nanos: string | null | undefined): string {
-  if (!nanos || nanos === '0') return '—';
-  return new Date(Number(BigInt(nanos) / 1_000_000n)).toLocaleString();
-}
-
-function accountLink(account: string) {
-  return `${ENV.explorerUrl}/address/${account}`;
+function initials(account: string): string {
+  const name = account.split('.')[0] ?? account;
+  return name.slice(0, 2);
 }
 
 export function ProjectDetail() {
@@ -41,10 +41,12 @@ export function ProjectDetail() {
 
   if (!Number.isFinite(projectId)) {
     return (
-      <main className="page">
-        <Link className="back" to="/">
-          ← all projects
-        </Link>
+      <main className="wrap">
+        <div className="top">
+          <Link className="back" to="/">
+            ← projects
+          </Link>
+        </div>
         <div className="notice notice-error">
           <strong>This project id is not a number, so there is nothing to read.</strong>
           <span>Open a project from your dashboard instead.</span>
@@ -55,8 +57,8 @@ export function ProjectDetail() {
 
   if (project.isLoading) {
     return (
-      <main className="page">
-        <p className="muted">Reading project #{projectId} from the chain…</p>
+      <main className="wrap">
+        <p className="dim">Reading project #{projectId} from the chain…</p>
       </main>
     );
   }
@@ -64,12 +66,17 @@ export function ProjectDetail() {
   if (project.error || !project.data) {
     const mapped = project.error ? mapError(project.error) : null;
     return (
-      <main className="page">
-        <Link className="back" to="/">
-          ← back
-        </Link>
+      <main className="wrap">
+        <div className="top">
+          <Link className="back" to="/">
+            ← projects
+          </Link>
+        </div>
         <div className="notice notice-error">
-          <strong>{mapped?.code ? `${mapped.code}: ` : ''}{mapped?.message ?? 'Project not found.'}</strong>
+          <strong>
+            {mapped?.code ? `${mapped.code}: ` : ''}
+            {mapped?.message ?? 'Project not found.'}
+          </strong>
           {mapped?.action && <span>{mapped.action}</span>}
         </div>
       </main>
@@ -77,11 +84,9 @@ export function ProjectDetail() {
   }
 
   const p = project.data;
+  const now = nowNanos();
   const claimableAmount = BigInt(claimable.data ?? '0');
-  const eligibility =
-    config.data &&
-    availableActions(p, accountId, nowNanos(), config.data, claimableAmount);
-
+  const eligibility = config.data && availableActions(p, accountId, now, config.data, claimableAmount);
   const isParty = accountId === p.client || accountId === p.freelancer || accountId === p.arbiter;
   const counterpartyProposal =
     accountId === p.client
@@ -90,159 +95,220 @@ export function ProjectDetail() {
         ? p.client_settlement_proposal
         : null;
 
+  const settled = !!p.distribution;
+
   return (
-    <main className="page">
-      <Link className="back" to="/">
-        ← all projects
-      </Link>
-
-      <header className="detail-head">
-        <div>
-          <span className="card-id">project #{p.id}</span>
-          <h1>{p.title}</h1>
+    <main className="wrap">
+      <div className="top">
+        <div className="top-left">
+          <Link className="back" to="/">
+            ← projects
+          </Link>
+          <a className="cid" href={`${ENV.explorerUrl}/address/${ENV.contractId}`} target="_blank" rel="noreferrer">
+            {ENV.contractId}
+          </a>
         </div>
-        <div className="detail-head-right">
-          <StatusBadge status={p.status} />
-          <span className="amount">{formatNear(p.amount)} NEAR</span>
-        </div>
-      </header>
+        <StatusChip status={p.status} />
+      </div>
 
-      <p className="detail-desc">{p.description}</p>
-
-      <section className="detail-grid">
-        <div className="panel">
-          <h2>Parties</h2>
-          <ul className="party-list">
-            {(
-              [
-                ['Client', p.client],
-                ['Freelancer', p.freelancer],
-                ['Arbiter', p.arbiter],
-              ] as const
-            ).map(([label, account]) => (
-              <li key={label}>
-                <span className="muted small">{label}</span>
-                <a href={accountLink(account)} target="_blank" rel="noreferrer">
-                  {account === accountId ? `${account} (you)` : account}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div className="panel">
-          <h2>Timeline</h2>
-          <dl className="kv">
-            <dt>Created</dt>
-            <dd>{when(p.created_at)}</dd>
-            <dt>Accept deadline</dt>
-            <dd>{when(p.accept_deadline)}</dd>
-            <dt>Work deadline</dt>
-            <dd>{when(p.work_deadline)}</dd>
-            <dt>Review deadline</dt>
-            <dd>{when(p.review_deadline)}</dd>
-            <dt>Revision deadline</dt>
-            <dd>{when(p.revision_deadline)}</dd>
-            {p.dispute_opened_at !== '0' && (
-              <>
-                <dt>Dispute opened</dt>
-                <dd>{when(p.dispute_opened_at)}</dd>
-              </>
-            )}
-          </dl>
-        </div>
-
-        <div className="panel">
-          <h2>Deliverable</h2>
-          {p.deliverable ? (
-            <div className="stack">
-              <a href={p.deliverable.link} target="_blank" rel="noreferrer">
-                {p.deliverable.link}
-              </a>
-              {p.deliverable.note && <p className="muted">{p.deliverable.note}</p>}
-              <span className="muted small">
-                submitted {when(p.deliverable.submitted_at)} · revision {p.deliverable.revision_index}
-              </span>
+      <div className="grid">
+        <div className="col">
+          <div className="card">
+            <div className="label">escrowed</div>
+            <div className="amount">
+              {formatNearFixed(p.amount)}
+              <small>NEAR</small>
             </div>
-          ) : (
-            <p className="muted">Nothing submitted yet.</p>
+            <div className="project-title">{p.title}</div>
+            <div className="sub">
+              client <code>{p.client}</code> · freelancer <code>{p.freelancer}</code>
+            </div>
+
+            <WindowMeter project={p} nowNanos={now} />
+            <SplitBar project={p} />
+          </div>
+
+          <div className="card">
+            <h2 className="h">progress</h2>
+            <Rail project={p} />
+            <p className="sub" style={{ marginTop: 16 }}>
+              {p.description}
+            </p>
+          </div>
+        </div>
+
+        <div className="col">
+          <div className="card tight">
+            <h2 className="h">parties</h2>
+            <div className="rows">
+              {(
+                [
+                  ['Client', p.client, settled ? p.distribution?.client_amount : null],
+                  ['Freelancer', p.freelancer, settled ? p.distribution?.freelancer_amount : null],
+                  ['Arbiter', p.arbiter, null],
+                ] as const
+              ).map(([label, account, allocation]) => (
+                <div className="row" key={label}>
+                  <div className="avatar">{initials(account)}</div>
+                  <div className="row-main">
+                    <b>
+                      {label}
+                      {account === accountId ? ' (you)' : ''}
+                    </b>
+                    <span>
+                      <a href={`${ENV.explorerUrl}/address/${account}`} target="_blank" rel="noreferrer">
+                        {account}
+                      </a>
+                    </span>
+                  </div>
+                  <div className={`row-val ${allocation ? 'good' : ''}`}>
+                    {allocation ? formatNear(allocation) : label === 'Arbiter' ? 'idle' : '—'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card tight">
+            <h2 className="h">work</h2>
+            <div className="rows">
+              <div className="row">
+                <div className="avatar">DL</div>
+                <div className="row-main">
+                  <b>Deliverable</b>
+                  <span>
+                    {p.deliverable ? (
+                      <a href={p.deliverable.link} target="_blank" rel="noreferrer">
+                        {p.deliverable.link}
+                      </a>
+                    ) : (
+                      'nothing submitted yet'
+                    )}
+                  </span>
+                </div>
+                <div className={`row-val ${p.deliverable ? 'good' : ''}`}>
+                  {p.deliverable ? `v${p.deliverable.revision_index}` : '—'}
+                </div>
+              </div>
+              <div className="row">
+                <div className="avatar">REV</div>
+                <div className="row-main">
+                  <b>Revisions</b>
+                  <span>{config.data ? `${config.data.max_revisions} allowed by the contract` : '—'}</span>
+                </div>
+                <div className="row-val">
+                  {p.revision_count} / {config.data?.max_revisions ?? 2}
+                </div>
+              </div>
+              <div className="row">
+                <div className="avatar">DUE</div>
+                <div className="row-main">
+                  <b>Work deadline</b>
+                  <span>{formatStamp(p.work_deadline)}</span>
+                </div>
+                <div className="row-val">{formatStamp(p.work_deadline)}</div>
+              </div>
+              {accountId && (
+                <div className="row">
+                  <div className="avatar">WD</div>
+                  <div className="row-main">
+                    <b>Withdrawable by you</b>
+                    <span>allocations you can pull to your wallet</span>
+                  </div>
+                  <div className={`row-val ${claimableAmount > 0n ? 'good' : ''}`}>
+                    {formatNear(claimableAmount)}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {(p.client_evidence || p.freelancer_evidence || p.client_settlement_proposal !== null ||
+            p.freelancer_settlement_proposal !== null) && (
+            <div className="card tight">
+              <h2 className="h">dispute</h2>
+              <div className="rows">
+                {p.client_evidence && (
+                  <div className="row">
+                    <div className="avatar">CE</div>
+                    <div className="row-main">
+                      <b>Client evidence</b>
+                      <span>
+                        <a href={p.client_evidence.link} target="_blank" rel="noreferrer">
+                          {p.client_evidence.link}
+                        </a>
+                      </span>
+                    </div>
+                    <div className="row-val">submitted</div>
+                  </div>
+                )}
+                {p.freelancer_evidence && (
+                  <div className="row">
+                    <div className="avatar">FE</div>
+                    <div className="row-main">
+                      <b>Freelancer evidence</b>
+                      <span>
+                        <a href={p.freelancer_evidence.link} target="_blank" rel="noreferrer">
+                          {p.freelancer_evidence.link}
+                        </a>
+                      </span>
+                    </div>
+                    <div className="row-val">submitted</div>
+                  </div>
+                )}
+                {p.client_settlement_proposal !== null && (
+                  <div className="row">
+                    <div className="avatar">CP</div>
+                    <div className="row-main">
+                      <b>Client proposes</b>
+                      <span>freelancer share</span>
+                    </div>
+                    <div className="row-val">{p.client_settlement_proposal}%</div>
+                  </div>
+                )}
+                {p.freelancer_settlement_proposal !== null && (
+                  <div className="row">
+                    <div className="avatar">FP</div>
+                    <div className="row-main">
+                      <b>Freelancer proposes</b>
+                      <span>freelancer share</span>
+                    </div>
+                    <div className="row-val">{p.freelancer_settlement_proposal}%</div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
-          <p className="muted small">Revisions used: {p.revision_count}</p>
-        </div>
 
-        <div className="panel">
-          <h2>Evidence</h2>
-          <div className="stack">
-            <div className="evidence-block">
-              <span className="muted small">Client</span>
-              {p.client_evidence ? (
-                <a href={p.client_evidence.link} target="_blank" rel="noreferrer">
-                  {p.client_evidence.link}
-                </a>
-              ) : (
-                <p className="muted">not submitted</p>
-              )}
+          {p.resolution && (
+            <div className="card tight">
+              <h2 className="h">decision</h2>
+              <div className="rows">
+                <div className="row">
+                  <div className="avatar">BY</div>
+                  <div className="row-main">
+                    <b>{p.resolution.resolved_by === 'Arbiter' ? 'Arbiter decision' : 'Mutual settlement'}</b>
+                    <span>{formatStamp(p.resolution.resolved_at)}</span>
+                  </div>
+                  <div className="row-val good">{p.resolution.freelancer_percent}% to freelancer</div>
+                </div>
+              </div>
             </div>
-            <div className="evidence-block">
-              <span className="muted small">Freelancer</span>
-              {p.freelancer_evidence ? (
-                <a href={p.freelancer_evidence.link} target="_blank" rel="noreferrer">
-                  {p.freelancer_evidence.link}
-                </a>
-              ) : (
-                <p className="muted">not submitted</p>
-              )}
-            </div>
-          </div>
+          )}
         </div>
-
-        {(p.client_settlement_proposal !== null || p.freelancer_settlement_proposal !== null) && (
-          <div className="panel">
-            <h2>Settlement proposals</h2>
-            <dl className="kv">
-              <dt>Client proposes</dt>
-              <dd>{p.client_settlement_proposal !== null ? `${p.client_settlement_proposal}% to freelancer` : '—'}</dd>
-              <dt>Freelancer proposes</dt>
-              <dd>
-                {p.freelancer_settlement_proposal !== null
-                  ? `${p.freelancer_settlement_proposal}% to freelancer`
-                  : '—'}
-              </dd>
-            </dl>
-          </div>
-        )}
-
-        {p.distribution && (
-          <div className="panel">
-            <h2>Outcome</h2>
-            <dl className="kv">
-              <dt>To freelancer</dt>
-              <dd>{formatNear(p.distribution.freelancer_amount)} NEAR</dd>
-              <dt>To client</dt>
-              <dd>{formatNear(p.distribution.client_amount)} NEAR</dd>
-              {p.resolution && (
-                <>
-                  <dt>Decided by</dt>
-                  <dd>
-                    {p.resolution.resolved_by === 'Arbiter' ? 'arbiter' : 'mutual settlement'} ·{' '}
-                    {p.resolution.freelancer_percent}% to freelancer
-                  </dd>
-                </>
-              )}
-            </dl>
-          </div>
-        )}
-      </section>
+      </div>
 
       {!accountId ? (
-        <section className="actionbar actionbar-quiet">
-          <span className="muted">Connect a wallet to see what you can do here.</span>
-          <button className="btn" onClick={connect}>
-            Connect wallet
-          </button>
-        </section>
+        <div className="dock">
+          <div className="dock-inner">
+            <span className="dock-hint">Connect a wallet to see what you can do here.</span>
+            <button className="btn primary" onClick={connect}>
+              Connect wallet
+            </button>
+          </div>
+        </div>
       ) : eligibility ? (
-        <ActionBar
+        <ActionDock
           project={p}
           actions={eligibility.actions}
           reason={
@@ -251,6 +317,7 @@ export function ProjectDetail() {
               : eligibility.reason
           }
           counterpartyPercent={counterpartyProposal}
+          claimable={claimableAmount}
         />
       ) : null}
     </main>

@@ -19,6 +19,14 @@ export function formatNear(yocto: U128 | bigint, maxDecimals = 4): string {
   return negative ? `-${text}` : text;
 }
 
+/** Fixed decimals, for money that must not jitter: 2000000000000000000000000n -> "2.0000" */
+export function formatNearFixed(yocto: U128 | bigint, decimals = 4): string {
+  const value = typeof yocto === 'bigint' ? yocto : BigInt(yocto || '0');
+  const whole = value / YOCTO_PER_NEAR;
+  const fraction = (value % YOCTO_PER_NEAR).toString().padStart(24, '0').slice(0, decimals);
+  return decimals > 0 ? `${whole}.${fraction}` : whole.toString();
+}
+
 /** "1.5" -> 1500000000000000000000000n. Rejects anything that is not a plain
  * decimal with at most 24 fractional digits — no parseFloat, ever. */
 export function parseNearToYocto(input: string): bigint {
