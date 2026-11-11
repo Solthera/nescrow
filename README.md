@@ -141,6 +141,8 @@ npm run dev        # http://localhost:5173
 
 `.env` is committed and contains only public values (testnet contract id, public RPC URL). The app refuses to boot on any network other than testnet.
 
+Routes: `/` is the landing page, `/app` is the dashboard, `/p/:id` a project, `/new` the create form. The landing page reads its numbers — escrowed balance, project count, the deployed windows — from the contract, so it cannot drift from reality.
+
 Two things about the client libraries are worth knowing before you touch the code: `near-api-js` v7 and wallet-selector v10 no longer fit the v5 `Contract({ signer })` shape, so reads go through `JsonRpcProvider.callFunction` and writes through `wallet.signAndSendTransaction` — one adapter, `app/src/lib/near/contract.ts`. And both libraries assume Node globals (`Buffer`, `process`), which is why `src/polyfills.ts` is imported before anything else and `vite.config.ts` defines `global`.
 
 ### Try the live contract

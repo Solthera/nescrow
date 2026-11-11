@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { Header } from './components/Header';
+import { Landing } from './pages/Landing';
 import { Dashboard } from './pages/Dashboard';
 import { ProjectDetail } from './pages/ProjectDetail';
 import { CreateProject } from './pages/CreateProject';
@@ -10,7 +11,8 @@ export default function App() {
       <div className="shell">
         <Header />
         <Routes>
-          <Route path="/" element={<Dashboard />} />
+          <Route path="/" element={<Landing />} />
+          <Route path="/app" element={<Dashboard />} />
           <Route path="/p/:id" element={<ProjectDetail />} />
           <Route path="/new" element={<CreateProject />} />
         </Routes>

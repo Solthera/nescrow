@@ -88,6 +88,7 @@ export async function call(
 // --- views ----------------------------------------------------------------
 
 export const getConfig = () => view<Config>('get_config');
+export const getProjectCount = () => view<number>('get_project_count');
 export const getFundInvariants = () => view<FundInvariants>('get_fund_invariants');
 export const getProject = (projectId: number) => view<Project>('get_project', { project_id: projectId });
 export const getClaimable = (account: string) => view<U128>('get_claimable', { account });

@@ -43,7 +43,7 @@ export function ProjectDetail() {
     return (
       <main className="wrap">
         <div className="top">
-          <Link className="back" to="/">
+          <Link className="back" to="/app">
             ← projects
           </Link>
         </div>
@@ -68,7 +68,7 @@ export function ProjectDetail() {
     return (
       <main className="wrap">
         <div className="top">
-          <Link className="back" to="/">
+          <Link className="back" to="/app">
             ← projects
           </Link>
         </div>
@@ -101,7 +101,7 @@ export function ProjectDetail() {
     <main className="wrap">
       <div className="top">
         <div className="top-left">
-          <Link className="back" to="/">
+          <Link className="back" to="/app">
             ← projects
           </Link>
           <a className="cid" href={`${ENV.explorerUrl}/address/${ENV.contractId}`} target="_blank" rel="noreferrer">

@@ -211,6 +211,70 @@ h2.h { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color
 .footer { padding: 26px 24px 30px; color: var(--dim); font-size: 11.5px; font-family: var(--mono); }
 .footer-inner { max-width: 1120px; margin: 0 auto; }
 
+
+/* ---------- landing ---------- */
+.landing { max-width: 1120px; margin: 0 auto; padding: 8px 24px 40px; }
+
+.hero-l { display: grid; grid-template-columns: 1.25fr 0.75fr; gap: 44px; align-items: start;
+  padding: 44px 0 56px; }
+.hero-l-copy .chip { margin-bottom: 20px; }
+.display { font-size: clamp(34px, 4.4vw, 54px); line-height: 1.05; letter-spacing: -0.03em;
+  font-weight: 600; margin: 0 0 20px; }
+.lede { font-size: 16px; line-height: 1.55; color: var(--muted); max-width: 46ch; margin: 0 0 26px; }
+.cta-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.fineprint { font: 11.5px var(--mono); color: var(--dim); margin-top: 18px; }
+
+.proof { background: var(--card); border: 1px solid var(--hair); border-radius: var(--r-lg); padding: 20px;
+  position: sticky; top: 24px; }
+.proof-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.proof-amount { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 34px;
+  letter-spacing: -0.02em; margin: 16px 0 4px; }
+.proof-amount small { display: block; font: 11px/1.4 -apple-system, sans-serif; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--dim); margin-top: 6px; }
+.proof-rows { margin: 18px 0 0; padding-top: 14px; border-top: 1px solid var(--hair); }
+.proof-rows > div { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; }
+.proof-rows dt { color: var(--muted); font-size: 12px; }
+.proof-rows dd { margin: 0; font: 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+.proof-link { display: block; margin-top: 16px; font: 11.5px var(--mono); color: var(--dim);
+  text-decoration: none; word-break: break-all; }
+.proof-link:hover { color: var(--accent); }
+
+.section { padding: 40px 0; border-top: 1px solid var(--hair); }
+.section-head { margin-bottom: 26px; }
+.section-head .sub { margin-top: 6px; }
+
+.steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 18px; }
+.step-item { border-top: 1px solid var(--hair); padding-top: 16px; }
+.step-n { font: 11px var(--mono); color: var(--accent); letter-spacing: 0.08em; }
+.step-item h3 { font-size: 15px; font-weight: 600; margin: 10px 0 6px; letter-spacing: -0.01em; }
+.step-item p { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.step-meta { font: 11px var(--mono); color: var(--dim); text-transform: uppercase; letter-spacing: 0.1em; }
+
+.cannot { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.cannot-item { display: flex; gap: 12px; background: var(--card); border: 1px solid var(--hair);
+  border-radius: var(--r-md); padding: 16px; }
+.cannot-mark { color: var(--danger); font: 600 16px var(--mono); line-height: 1.2; }
+.cannot-item b { display: block; font-size: 14px; margin-bottom: 4px; }
+.cannot-item p { margin: 0; color: var(--muted); font-size: 13px; }
+
+.spec-table { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0;
+  border-top: 1px solid var(--hair); }
+.spec-table > div { display: flex; justify-content: space-between; gap: 12px; padding: 13px 0;
+  border-bottom: 1px solid var(--hair); padding-right: 24px; }
+.spec-table dt { color: var(--muted); font-size: 12.5px; }
+.spec-table dd { margin: 0; font: 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+
+.landing-cta { padding: 56px 0 20px; border-top: 1px solid var(--hair); }
+.landing-cta h2 { font-size: clamp(24px, 3vw, 34px); letter-spacing: -0.02em; margin: 0 0 10px; }
+.landing-cta .sub { margin-bottom: 22px; }
+
+@media (max-width: 900px) {
+  .landing { padding: 4px 16px 28px; }
+  .hero-l { grid-template-columns: 1fr; gap: 28px; padding: 26px 0 36px; }
+  .proof { position: static; }
+  .section { padding: 30px 0; }
+}
+
 @media (max-width: 900px) {
   .grid { grid-template-columns: 1fr; }
   .amount { font-size: 40px; }

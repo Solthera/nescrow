@@ -122,7 +122,7 @@ export function CreateProject() {
 
   return (
     <main className="wrap">
-      <Link className="back" to="/">
+      <Link className="back" to="/app">
         ← all projects
       </Link>
       <h1 className="page-title" style={{ marginTop: 4 }}>Fund a project</h1>
