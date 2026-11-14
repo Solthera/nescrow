@@ -95,8 +95,11 @@ Honest snapshot — this README will be updated as pieces land.
 - [x] Smart contract implementation — 31 methods, 0 warnings
 - [x] Contract test suite — 113 unit tests green; 110 of 138 planned cases automated
 - [x] Testnet deployment
-- [ ] Frontend
-- [ ] AI dispute summary (optional)
+- [x] Frontend — landing, dashboard, project page, create form, wallet connect
+- [ ] Public deployment (config ready in `app/vercel.json`, needs a Vercel account)
+- [ ] Manual UI pass — the 15 UI cases need a human with a wallet
+- [ ] Three withdrawal edge cases (WD-05/06/07) — need a real failure to observe
+- [ ] AI dispute summary (optional, P1)
 - [ ] Demo video
 
 **Contract address (testnet):** [`nescrow-escrow.testnet`](https://testnet.nearblocks.io/address/nescrow-escrow.testnet)
